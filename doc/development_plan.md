@@ -17,7 +17,7 @@
     *   DNS 服务器核心逻辑实现。
     *   与 etcd 的集成，包括服务注册（通过自身 API 代理）、监听服务变化、服务发现。
     *   向上游 DNS 服务器的查询转发。
-    *   提供 RESTful API 供前端调用以及供服务实例进行注册/注销。
+    *   提供 RESTful API，其中管理接口（供前端调用）和服务注册接口（供服务实例进行注册/注销）将监听在不同的端口上以增强安全性。
 *   **前端界面 (React)**：
     *   展示已注册服务列表及其状态。
     *   允许用户查询和管理部分 DNS 配置（例如，自定义内部域名解析）。
@@ -77,7 +77,7 @@
 *   **etcd 集群 (etcd Cluster)**: 作为 **内部核心数据存储**，用于持久化服务注册信息和可能的 DNS 配置。**它不直接对外暴露**，所有对其的读写操作（包括服务注册、发现、配置变更）都由 **Go DNS 服务代理完成**。
 *   **Go DNS 服务 (Go DNS Service)**: 系统的核心组件，承担双重职责：
     *   **DNS 解析服务**: 监听标准的 DNS 查询请求 (UDP/53, TCP/53)。根据 etcd 中存储的服务信息进行解析。若内部无记录，则向上游 DNS 转发查询。
-    *   **服务注册与管理 API**: 提供 RESTful API。一部分 API 供服务实例进行注册、注销和发送心跳；另一部分 API 供 React 管理控制台进行系统配置和状态监控。Go DNS 服务内部的 `etcd_client` 模块负责将通过 API 收到的注册信息同步到 etcd 集群，并监听 etcd 的变化以更新 DNS 解析数据。
+    *   **服务注册与管理 API**: 提供 RESTful API。一部分 API（监听于专门的**管理端口**）供 React 管理控制台进行系统配置和状态监控；另一部分 API（监听于独立的**服务注册端口**）供服务实例进行注册、注销和发送心跳。Go DNS 服务内部的 `etcd_client` 模块负责将通过 API 收到的注册信息同步到 etcd 集群，并监听 etcd 的变化以更新 DNS 解析数据。
 *   **React 管理控制台 (React Admin Console)**:
     *   通过 API 与 Go DNS 服务交互。
     *   展示服务状态，允许用户配置。
@@ -105,17 +105,17 @@
 *   **关键技术**: etcd V3 client (`go.etcd.io/etcd/client/v3`)。
 
 #### 4.1.3. API 接口模块 (`api_handler`)
-*   **职责**: 提供 RESTful API。一部分供 React 前端管理控制台调用（如查询服务列表、获取配置），另一部分供服务实例调用以完成服务注册、注销和心跳维持。
+*   **职责**: 提供 RESTful API，监听在不同的端口上以增强安全性。管理 API（例如，供 React 前端调用，用于查询服务列表、获取配置）监听于一个专门的**管理 API 端口**，而服务注册 API（供服务实例调用以完成服务注册、注销和心跳维持）监听于另一个独立的**服务注册 API 端口**。
 *   **主要组件**:
-    *   `Router`: 定义 API 路由 (e.g., `/admin/services`, `/admin/config`, `/services/register`, `/services/deregister`, `/services/heartbeat`)。
-    *   `AuthMiddleware`: API 认证与授权 (可能对管理 API 和服务注册 API 采用不同策略)。
-    *   `ServiceController`: 处理服务相关的管理 API 请求 (如列表查询)。
-    *   `RegistryController`: 处理服务实例的注册、注销、心跳 API 请求，内部调用 `etcd_client` 模块。
-    *   `ConfigController`: 处理配置相关的 API 请求。
-*   **关键技术**: Gin 或 Echo Web 框架。
+    *   `Router`: 定义 API 路由。系统将启动两个独立的 HTTP 服务监听器（或一个服务引擎配置多个监听器），分别对应管理 API 端口和服务注册 API 端口。例如，管理 API 路由可能以 `/admin` 为前缀，服务注册 API 路由可能以 `/services` 为前缀。
+    *   `AuthMiddleware`: API 认证与授权。可以为管理端口和服务注册端口配置独立的认证策略（例如，管理端口可能需要更强的如 JWT 的认证机制，而服务注册端口可能依赖于网络层安全、客户端证书或轻量级 token 认证）。
+    *   `ServiceController`: 处理与服务管理相关的 API 请求 (如列表查询)，部署在管理 API 端口的路由组下。
+    *   `RegistryController`: 处理服务实例的注册、注销、心跳 API 请求，部署在服务注册 API 端口的路由组下，内部调用 `etcd_client` 模块。
+    *   `ConfigController`: 处理配置相关的 API 请求，部署在管理 API 端口的路由组下。
+*   **关键技术**: Gin 或 Echo Web 框架 (均支持在不同端口上运行服务或为不同路由组绑定到特定监听器)。
 
 #### 4.1.4. 配置模块 (`config`)
-*   **职责**: 加载和管理系统配置 (e.g., etcd 地址, 上游 DNS, API 端口)。
+*   **职责**: 加载和管理系统配置 (e.g., etcd 地址, 上游 DNS, DNS 服务端口, **管理 API 端口**, **服务注册 API 端口**)。
 *   **主要组件**:
     *   `Loader`: 从文件或环境变量加载配置。
     *   `Store`: 存储当前配置。
@@ -204,10 +204,10 @@
 |        | 4. 实现从 etcd 读取服务信息并解析 A/SRV 记录 | Dev    | 7 天     | To Do    |
 |        | 5. 实现向上游 DNS 转发逻辑               | Dev    | 3 天     | To Do    |
 | **M2: 服务注册 API 与 etcd 持久化 (3 周)** |                                          |        |          |          |
-|        | 1. 设计服务注册 API 端点及请求/响应模型    | Dev    | 3 天     | To Do    |
-|        | 2. 实现服务注册、注销、心跳 API 处理器 (调用 etcd_client) | Dev    | 7 天     | To Do    |
+|        | 1. 设计服务注册 API 端点（监听于服务注册端口）及管理 API 端点（监听于管理端口）的请求/响应模型    | Dev    | 3 天     | To Do    |
+|        | 2. 实现服务注册、注销、心跳 API 处理器（监听于服务注册端口，调用 etcd_client） | Dev    | 7 天     | To Do    |
 |        | 3. `etcd_client` 实现服务信息到 etcd 的持久化逻辑 (含租约) | Dev    | 5 天     | To Do    |
-|        | 4. API: (管理端) 查询服务列表、服务详情    | Dev    | 3 天     | To Do    |
+|        | 4. API: (管理端，监听于管理端口) 查询服务列表、服务详情    | Dev    | 3 天     | To Do    |
 | **M3: React 前端基础与服务展示 (4 周)** |                                          |        |          |          |
 |        | 1. React 项目初始化 (CRA/Vite)          | Dev    | 2 天     | To Do    |
 |        | 2. API Client 封装 (Axios)               | Dev    | 3 天     | To Do    |
@@ -262,9 +262,9 @@
 ### 9.3. 生产环境
 *   **etcd**: 部署高可用的 etcd 集群 (至少3个节点)。
 *   **Go DNS Service**:
-    *   以容器方式 (Docker) 部署。
+    *   以容器方式 (Docker) 部署，并暴露所需的 DNS 端口 (如 UDP/53, TCP/53)、**管理 API 端口**和**服务注册 API 端口**。
     *   使用 Kubernetes 或其他容器编排平台进行管理，实现自动扩缩容和故障恢复。
-    *   通过 Load Balancer 将 DNS 请求分发到多个实例。
+    *   通过 Load Balancer 将 DNS 请求分发到多个实例。针对 API 端口，可能需要配置不同的 Load Balancer 服务或监听规则。
 *   **React Admin Console**:
     *   构建静态文件，通过 Nginx 或 CDN 提供服务。
     *   API 请求指向后端 Load Balancer。
