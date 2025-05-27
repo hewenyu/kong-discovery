@@ -157,6 +157,9 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	m.SetReply(r)
 	m.Authoritative = true
 
+	// 标记是否处理了所有查询
+	allQueriesHandled := true
+
 	// 遍历所有的问题
 	for _, q := range r.Question {
 		s.logger.Info("收到DNS查询",
@@ -167,16 +170,62 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 		// 处理DNS查询
 		found := s.handleQuery(q, m)
 
-		// 如果没有找到答案，设置响应代码为 NXDOMAIN
+		// 如果没有找到答案，标记为未处理所有查询
 		if !found {
-			m.SetRcode(r, dns.RcodeNameError)
+			allQueriesHandled = false
 		}
+	}
+
+	// 如果没有处理所有查询，并且配置了上游DNS，尝试转发
+	if !allQueriesHandled && s.cfg.DNS.UpstreamDNS != "" {
+		err := s.forwardToUpstream(r, m)
+		if err != nil {
+			s.logger.Error("向上游DNS转发查询失败", zap.Error(err))
+			// 如果转发失败，设置响应代码为 SERVFAIL
+			m.SetRcode(r, dns.RcodeServerFailure)
+		}
+	} else if !allQueriesHandled {
+		// 如果没有找到答案且没有配置上游DNS，设置响应代码为 NXDOMAIN
+		m.SetRcode(r, dns.RcodeNameError)
 	}
 
 	// 发送响应
 	if err := w.WriteMsg(m); err != nil {
 		s.logger.Error("发送DNS响应失败", zap.Error(err))
 	}
+}
+
+// forwardToUpstream 将DNS查询转发到上游DNS服务器
+func (s *DNSServer) forwardToUpstream(r *dns.Msg, m *dns.Msg) error {
+	s.logger.Info("转发查询到上游DNS服务器",
+		zap.String("upstream", s.cfg.DNS.UpstreamDNS))
+
+	// 创建一个新的客户端
+	c := new(dns.Client)
+
+	// 复制原始请求
+	req := r.Copy()
+	req.Id = dns.Id() // 生成新的ID
+
+	// 发送到上游DNS服务器
+	resp, _, err := c.Exchange(req, s.cfg.DNS.UpstreamDNS)
+	if err != nil {
+		return err
+	}
+
+	// 检查响应
+	if resp == nil {
+		return fmt.Errorf("上游DNS返回空响应")
+	}
+
+	// 将上游DNS的响应复制到我们的响应中
+	m.Answer = resp.Answer
+	m.Ns = resp.Ns
+	m.Extra = resp.Extra
+	m.Rcode = resp.Rcode
+	m.Authoritative = false // 因为这是从上游转发的，所以不是权威响应
+
+	return nil
 }
 
 // handleQuery 处理单个DNS查询问题

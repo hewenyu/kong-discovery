@@ -232,3 +232,95 @@ func TestDNSServer_QueryEtcdRecord(t *testing.T) {
 	err = server.Shutdown(ctx)
 	assert.NoError(t, err)
 }
+
+func TestDNSServer_ForwardToUpstream(t *testing.T) {
+	// 准备测试配置
+	cfg := &config.Config{}
+	cfg.DNS.ListenAddress = "127.0.0.1"
+	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
+	cfg.DNS.Protocol = "udp"
+	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 使用Google的DNS服务器作为上游
+
+	// 创建日志记录器
+	logger := &MockLogger{}
+
+	// 创建并启动服务器
+	server := NewDNSServer(cfg, logger)
+
+	// 设置模拟的etcd客户端
+	mockClient := &MockEtcdClient{}
+	server.SetEtcdClient(mockClient)
+
+	err := server.Start()
+	require.NoError(t, err)
+
+	// 等待服务器启动
+	time.Sleep(100 * time.Millisecond)
+
+	// 创建DNS客户端
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA) // 查询example.com，应该被转发
+	m.RecursionDesired = true
+
+	// 发送查询
+	r, _, err := c.Exchange(m, "127.0.0.1:15353")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	// 验证响应是成功的
+	assert.Equal(t, dns.RcodeSuccess, r.Rcode, "转发查询应该成功")
+	assert.True(t, len(r.Answer) > 0, "应该返回至少一个回答")
+
+	// 关闭服务器
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = server.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
+func TestDNSServer_NoUpstreamDNS(t *testing.T) {
+	// 准备测试配置，不设置上游DNS
+	cfg := &config.Config{}
+	cfg.DNS.ListenAddress = "127.0.0.1"
+	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
+	cfg.DNS.Protocol = "udp"
+	cfg.DNS.UpstreamDNS = "" // 不设置上游DNS
+
+	// 创建日志记录器
+	logger := &MockLogger{}
+
+	// 创建并启动服务器
+	server := NewDNSServer(cfg, logger)
+
+	// 设置模拟的etcd客户端
+	mockClient := &MockEtcdClient{}
+	server.SetEtcdClient(mockClient)
+
+	err := server.Start()
+	require.NoError(t, err)
+
+	// 等待服务器启动
+	time.Sleep(100 * time.Millisecond)
+
+	// 创建DNS客户端
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion("unknown.example.", dns.TypeA) // 查询未知域名
+	m.RecursionDesired = true
+
+	// 发送查询
+	r, _, err := c.Exchange(m, "127.0.0.1:15353")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	// 验证响应是NXDOMAIN（名称不存在）
+	assert.Equal(t, dns.RcodeNameError, r.Rcode, "未知域名查询应该返回NXDOMAIN")
+	assert.Equal(t, 0, len(r.Answer), "不应该返回任何答案")
+
+	// 关闭服务器
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = server.Shutdown(ctx)
+	assert.NoError(t, err)
+}
