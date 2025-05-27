@@ -6,7 +6,7 @@ etcd:
 
 dns:
   listen_address: "0.0.0.0"
-  port: 53
+  port: 6553
   protocol: "both"  # "udp", "tcp", or "both"
   upstream_dns: "8.8.8.8:53"
 

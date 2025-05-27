@@ -2,6 +2,7 @@ package etcdclient
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,6 +10,14 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
+
+// DNSRecord 表示存储在etcd中的DNS记录
+type DNSRecord struct {
+	Type  string   `json:"type"`           // 记录类型 (A, AAAA, SRV, CNAME等)
+	Value string   `json:"value"`          // 记录值 (对于A记录是IP地址，CNAME是目标域名等)
+	TTL   int      `json:"ttl"`            // 记录的TTL (秒)
+	Tags  []string `json:"tags,omitempty"` // 可选标签，用于记录分组或筛选
+}
 
 // Client 定义etcd客户端接口
 type Client interface {
@@ -26,6 +35,15 @@ type Client interface {
 
 	// GetWithPrefix 从etcd获取指定前缀的所有key-value
 	GetWithPrefix(ctx context.Context, prefix string) (map[string]string, error)
+
+	// GetDNSRecord 从etcd获取DNS记录
+	GetDNSRecord(ctx context.Context, domain string, recordType string) (*DNSRecord, error)
+
+	// PutDNSRecord 将DNS记录存储到etcd
+	PutDNSRecord(ctx context.Context, domain string, record *DNSRecord) error
+
+	// GetDNSRecordsForDomain 获取域名的所有DNS记录
+	GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*DNSRecord, error)
 }
 
 // EtcdClient 实现Client接口
@@ -134,4 +152,102 @@ func (e *EtcdClient) GetWithPrefix(ctx context.Context, prefix string) (map[stri
 	}
 
 	return result, nil
+}
+
+// getDNSRecordKey 生成DNS记录的etcd键
+func getDNSRecordKey(domain, recordType string) string {
+	return fmt.Sprintf("/dns/records/%s/%s", domain, recordType)
+}
+
+// GetDNSRecord 从etcd获取DNS记录
+func (e *EtcdClient) GetDNSRecord(ctx context.Context, domain string, recordType string) (*DNSRecord, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	key := getDNSRecordKey(domain, recordType)
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := e.client.Get(ctx, key)
+	if err != nil {
+		e.logger.Error("从etcd获取DNS记录失败", zap.String("key", key), zap.Error(err))
+		return nil, fmt.Errorf("从etcd获取DNS记录失败: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("DNS记录不存在: %s", key)
+	}
+
+	var record DNSRecord
+	if err := json.Unmarshal(resp.Kvs[0].Value, &record); err != nil {
+		e.logger.Error("解析DNS记录失败", zap.String("key", key), zap.Error(err))
+		return nil, fmt.Errorf("解析DNS记录失败: %w", err)
+	}
+
+	return &record, nil
+}
+
+// PutDNSRecord 将DNS记录存储到etcd
+func (e *EtcdClient) PutDNSRecord(ctx context.Context, domain string, record *DNSRecord) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	key := getDNSRecordKey(domain, record.Type)
+
+	recordJSON, err := json.Marshal(record)
+	if err != nil {
+		e.logger.Error("序列化DNS记录失败", zap.String("domain", domain), zap.Error(err))
+		return fmt.Errorf("序列化DNS记录失败: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err = e.client.Put(ctx, key, string(recordJSON))
+	if err != nil {
+		e.logger.Error("保存DNS记录到etcd失败", zap.String("key", key), zap.Error(err))
+		return fmt.Errorf("保存DNS记录到etcd失败: %w", err)
+	}
+
+	e.logger.Info("DNS记录保存成功",
+		zap.String("domain", domain),
+		zap.String("type", record.Type),
+		zap.String("value", record.Value))
+	return nil
+}
+
+// GetDNSRecordsForDomain 获取域名的所有DNS记录
+func (e *EtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*DNSRecord, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	prefix := fmt.Sprintf("/dns/records/%s/", domain)
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		e.logger.Error("从etcd获取DNS记录失败", zap.String("prefix", prefix), zap.Error(err))
+		return nil, fmt.Errorf("从etcd获取DNS记录失败: %w", err)
+	}
+
+	records := make(map[string]*DNSRecord)
+	for _, kv := range resp.Kvs {
+		var record DNSRecord
+		if err := json.Unmarshal(kv.Value, &record); err != nil {
+			e.logger.Error("解析DNS记录失败", zap.String("key", string(kv.Key)), zap.Error(err))
+			continue
+		}
+
+		// 从key中提取记录类型
+		recordType := record.Type
+		records[recordType] = &record
+	}
+
+	return records, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hewenyu/kong-discovery/internal/apihandler"
 	"github.com/hewenyu/kong-discovery/internal/config"
+	"github.com/hewenyu/kong-discovery/internal/dnsserver"
 	"github.com/hewenyu/kong-discovery/internal/etcdclient"
 	"go.uber.org/zap"
 )
@@ -91,6 +92,34 @@ func main() {
 		zap.String("address", appConfig.API.Registration.ListenAddress),
 		zap.Int("port", appConfig.API.Registration.Port))
 
+	// 初始化DNS服务器并注入etcd客户端
+	dnsServer := dnsserver.NewDNSServer(appConfig, logger)
+	dnsServer.SetEtcdClient(etcdClient)
+
+	// 创建测试DNS记录
+	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer testCancel()
+	testRecord := &etcdclient.DNSRecord{
+		Type:  "A",
+		Value: "192.168.1.100",
+		TTL:   300,
+	}
+	if err := etcdClient.PutDNSRecord(testCtx, "kong.test", testRecord); err != nil {
+		logger.Warn("创建测试DNS记录失败", zap.Error(err))
+	} else {
+		logger.Info("创建测试DNS记录成功", zap.String("domain", "kong.test"))
+	}
+
+	// 启动DNS服务器
+	if err := dnsServer.Start(); err != nil {
+		logger.Error("启动DNS服务器失败", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Info("DNS服务器启动成功",
+		zap.String("address", appConfig.DNS.ListenAddress),
+		zap.Int("port", appConfig.DNS.Port),
+		zap.String("protocol", appConfig.DNS.Protocol))
+
 	// 等待信号以优雅关闭
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -98,9 +127,16 @@ func main() {
 
 	logger.Info("接收到关闭信号，正在优雅关闭...")
 
-	// 优雅关闭API服务
+	// 优雅关闭所有服务
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
+
+	// 关闭DNS服务器
+	if err := dnsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("关闭DNS服务器失败", zap.Error(err))
+	}
+
+	// 关闭API服务
 	if err := apiHandler.Shutdown(shutdownCtx); err != nil {
 		logger.Error("关闭API服务失败", zap.Error(err))
 	}
