@@ -16,11 +16,15 @@ kong-discovery/
 │   ├── development_plan.md # 开发规划文档
 │   └── project_structure.md # 本文档
 ├── internal/               # 内部包
+│   ├── apihandler/         # API处理器模块
+│   │   ├── handler.go      # API处理器接口和实现
+│   │   └── handler_test.go # API处理器测试
 │   ├── config/             # 配置管理模块
 │   │   ├── config.go       # 配置结构和加载逻辑
 │   │   ├── config_test.go  # 配置模块测试
 │   │   ├── logger.go       # 日志接口和实现
 │   │   └── logger_test.go  # 日志模块测试
+│   ├── dnsserver/         # DNS服务器模块（待实现）
 │   └── etcdclient/        # etcd客户端模块
 │       ├── client.go      # etcd客户端接口和实现
 │       └── client_test.go # etcd客户端测试
@@ -57,17 +61,20 @@ kong-discovery/
    - 实现了基本操作（连接、Ping、Get、GetWithPrefix）
    - 完成了集成测试
 
+5. **API处理器模块** (任务1.5, 1.6)
+   - 使用Echo框架搭建HTTP服务
+   - 实现管理API端口监听与健康检查端点
+   - 实现服务注册API端口监听与健康检查端点
+   - 完成了单元测试
+
 ## 下一步开发计划
 
 即将开始开发的模块:
 
-1. **API处理器模块** (任务1.5)
-   - 使用Echo框架搭建HTTP服务
-   - 实现管理API端口监听
-   - 实现健康检查端点
-
-2. **服务注册API端口** (任务1.6)
-   - 配置Echo服务监听服务注册API端口
+1. **DNS服务器模块** (任务1.7)
+   - 使用 `miekg/dns` 库搭建基础DNS服务器
+   - 实现硬编码DNS记录响应
+   - 实现DNS端口监听
 
 ## 依赖库
 
@@ -76,6 +83,7 @@ kong-discovery/
 - `go.uber.org/zap` - 日志库
 - `github.com/spf13/viper` - 配置管理
 - `go.etcd.io/etcd/client/v3` - etcd客户端
+- `github.com/labstack/echo/v4` - Web框架
 - `github.com/stretchr/testify` - 测试辅助库
 
 ## 设计原则
@@ -90,4 +98,5 @@ kong-discovery/
 已完成的模块都有对应的测试:
 - 日志模块: 单元测试
 - 配置模块: 单元测试
-- etcd客户端: 集成测试 
+- etcd客户端: 集成测试
+- API处理器: 单元测试 

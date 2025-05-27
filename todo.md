@@ -28,9 +28,9 @@
     *   *测试*：单元测试连接和 Ping etcd 的功能 (可能需要 mock etcd client 或连接到本地测试 etcd)。
 
 ### Echo 框架与 API 基础
-- [ ] **1.5.** API 处理器模块 (`internal/apihandler`)：使用 Echo 框架搭建基础 HTTP 服务，能够启动并监听指定的**管理 API 端口**。
+- [x] **1.5.** API 处理器模块 (`internal/apihandler`)：使用 Echo 框架搭建基础 HTTP 服务，能够启动并监听指定的**管理 API 端口**。
     *   *测试*：启动服务后，通过 `curl` 或 HTTP 客户端访问一个健康的检查端点 (e.g., `/health`)，确认服务能正常响应。
-- [ ] **1.6.** API 处理器模块 (`internal/apihandler`)：配置 Echo 服务以监听指定的**服务注册 API 端口** (可以与管理 API 在同一个 Echo 实例中通过不同 Server 配置，或两个独立实例)。
+- [x] **1.6.** API 处理器模块 (`internal/apihandler`)：配置 Echo 服务以监听指定的**服务注册 API 端口** (可以与管理 API 在同一个 Echo 实例中通过不同 Server 配置，或两个独立实例)。
     *   *测试*：启动服务后，确认两个端口都能独立响应健康的检查端点。
 
 ### 核心 DNS 服务
