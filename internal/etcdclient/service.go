@@ -174,6 +174,85 @@ func (e *EtcdClient) ServiceToDNSRecords(ctx context.Context, domain string) (ma
 	return records, nil
 }
 
+// RefreshServiceLease 刷新服务实例的租约
+func (e *EtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 生成服务实例键
+	key := getServiceInstanceKey(serviceName, instanceID)
+
+	// 首先获取当前服务实例数据
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	resp, err := e.client.Get(ctx, key)
+	if err != nil {
+		e.logger.Error("获取服务实例数据失败",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID),
+			zap.Error(err))
+		return fmt.Errorf("获取服务实例数据失败: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		e.logger.Warn("服务实例不存在，无法刷新租约",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID))
+		return fmt.Errorf("服务实例不存在: %s/%s", serviceName, instanceID)
+	}
+
+	// 解析服务实例数据
+	var instance ServiceInstance
+	if err := json.Unmarshal(resp.Kvs[0].Value, &instance); err != nil {
+		e.logger.Error("解析服务实例数据失败",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID),
+			zap.Error(err))
+		return fmt.Errorf("解析服务实例数据失败: %w", err)
+	}
+
+	// 如果提供了TTL，则更新实例的TTL
+	if ttl > 0 {
+		instance.TTL = ttl
+	}
+
+	// 创建新的租约
+	lease, err := e.client.Grant(ctx, int64(instance.TTL))
+	if err != nil {
+		e.logger.Error("创建etcd租约失败", zap.Error(err))
+		return fmt.Errorf("创建etcd租约失败: %w", err)
+	}
+
+	// 序列化更新后的服务实例
+	data, err := json.Marshal(&instance)
+	if err != nil {
+		e.logger.Error("序列化服务实例失败",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID),
+			zap.Error(err))
+		return fmt.Errorf("序列化服务实例失败: %w", err)
+	}
+
+	// 使用新租约写入服务实例数据
+	_, err = e.client.Put(ctx, key, string(data), clientv3.WithLease(lease.ID))
+	if err != nil {
+		e.logger.Error("刷新服务实例租约失败",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID),
+			zap.Error(err))
+		return fmt.Errorf("刷新服务实例租约失败: %w", err)
+	}
+
+	e.logger.Info("服务实例租约刷新成功",
+		zap.String("service", serviceName),
+		zap.String("id", instanceID),
+		zap.Int("ttl", instance.TTL))
+
+	return nil
+}
+
 // getServiceInstanceKey 生成服务实例在etcd中的键
 func getServiceInstanceKey(serviceName, instanceID string) string {
 	return fmt.Sprintf("/services/%s/%s", serviceName, instanceID)

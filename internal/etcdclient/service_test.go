@@ -158,3 +158,29 @@ func (m *mockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string)
 
 	return records, nil
 }
+
+// RefreshServiceLease 模拟刷新服务租约
+func (m *mockEtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
+	instances, ok := m.services[serviceName]
+	if !ok {
+		return fmt.Errorf("服务不存在: %s", serviceName)
+	}
+
+	var found bool
+	for i, instance := range instances {
+		if instance.InstanceID == instanceID {
+			// 如果提供了TTL，则更新TTL
+			if ttl > 0 {
+				instances[i].TTL = ttl
+			}
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("实例不存在: %s/%s", serviceName, instanceID)
+	}
+
+	return nil
+}

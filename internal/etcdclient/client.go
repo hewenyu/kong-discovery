@@ -59,6 +59,9 @@ type Client interface {
 
 	// ServiceToDNSRecords 将服务实例转换为DNS记录
 	ServiceToDNSRecords(ctx context.Context, domain string) (map[string]*DNSRecord, error)
+
+	// RefreshServiceLease 刷新服务实例的租约
+	RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error
 }
 
 // EtcdClient 实现Client接口

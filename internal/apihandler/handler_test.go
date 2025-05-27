@@ -122,6 +122,32 @@ func (m *MockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string)
 	return records, nil
 }
 
+// RefreshServiceLease 模拟刷新服务租约
+func (m *MockEtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
+	instances, ok := m.services[serviceName]
+	if !ok {
+		return fmt.Errorf("服务不存在: %s", serviceName)
+	}
+
+	var found bool
+	for i, instance := range instances {
+		if instance.InstanceID == instanceID {
+			// 如果提供了TTL，则更新TTL
+			if ttl > 0 {
+				instances[i].TTL = ttl
+			}
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("实例不存在: %s/%s", serviceName, instanceID)
+	}
+
+	return nil
+}
+
 func TestManagementHealthCheck(t *testing.T) {
 	// 准备测试配置
 	cfg := &config.Config{}
@@ -423,4 +449,111 @@ func TestShutdown(t *testing.T) {
 	defer cancel()
 	err := handler.Shutdown(ctx)
 	assert.NoError(t, err)
+}
+
+func TestServiceHeartbeat(t *testing.T) {
+	// 准备测试配置
+	cfg := &config.Config{}
+	cfg.API.Registration.ListenAddress = "localhost"
+	cfg.API.Registration.Port = 8081
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建模拟etcd客户端
+	mockEtcd := NewMockEtcdClient()
+
+	// 先注册一个服务实例
+	ctx := context.Background()
+	testInstance := &etcdclient.ServiceInstance{
+		ServiceName: "test-service",
+		InstanceID:  "instance-001",
+		IPAddress:   "192.168.1.100",
+		Port:        8080,
+		TTL:         60,
+	}
+	err := mockEtcd.RegisterService(ctx, testInstance)
+	require.NoError(t, err)
+
+	// 验证服务已注册
+	instances, err := mockEtcd.GetServiceInstances(ctx, "test-service")
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+	originalTTL := instances[0].TTL
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		registrationServer: e,
+		cfg:                cfg,
+		logger:             &MockLogger{},
+		etcdClient:         mockEtcd,
+	}
+	handler.registerRegistrationRoutes()
+
+	// 准备心跳请求 - 更新TTL
+	reqBody := `{"ttl": 120}`
+	req := httptest.NewRequest(http.MethodPut, "/services/heartbeat/test-service/instance-001", strings.NewReader(reqBody))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response ServiceHeartbeatResponse
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Equal(t, "test-service", response.ServiceName)
+	assert.Equal(t, "instance-001", response.InstanceID)
+	assert.Equal(t, "服务租约刷新成功", response.Message)
+
+	// 验证TTL已更新
+	instances, err = mockEtcd.GetServiceInstances(ctx, "test-service")
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+	assert.Equal(t, 120, instances[0].TTL)
+	assert.NotEqual(t, originalTTL, instances[0].TTL)
+}
+
+func TestServiceHeartbeat_NotFound(t *testing.T) {
+	// 准备测试配置
+	cfg := &config.Config{}
+	cfg.API.Registration.ListenAddress = "localhost"
+	cfg.API.Registration.Port = 8081
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建模拟etcd客户端
+	mockEtcd := NewMockEtcdClient()
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		registrationServer: e,
+		cfg:                cfg,
+		logger:             &MockLogger{},
+		etcdClient:         mockEtcd,
+	}
+	handler.registerRegistrationRoutes()
+
+	// 准备心跳请求 - 对不存在的服务发送心跳
+	req := httptest.NewRequest(http.MethodPut, "/services/heartbeat/non-existent/instance-001", nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应 - 应该返回失败
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	var response ServiceHeartbeatResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.False(t, response.Success)
+	assert.Contains(t, response.Message, "刷新服务租约失败")
 }

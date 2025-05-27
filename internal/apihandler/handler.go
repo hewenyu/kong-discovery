@@ -153,6 +153,9 @@ func (h *EchoHandler) registerRegistrationRoutes() {
 	// 服务注销端点
 	h.registrationServer.DELETE("/services/:serviceName/:instanceId", h.deregisterServiceHandler)
 
+	// 服务心跳端点
+	h.registrationServer.PUT("/services/heartbeat/:serviceName/:instanceId", h.heartbeatServiceHandler)
+
 	// 服务注册API的其他端点将在后续任务中添加
 }
 
@@ -177,6 +180,20 @@ type ServiceRegistrationResponse struct {
 
 // ServiceDeregistrationResponse 定义服务注销响应结构
 type ServiceDeregistrationResponse struct {
+	Success     bool   `json:"success"`           // 是否成功
+	ServiceName string `json:"service_name"`      // 服务名称
+	InstanceID  string `json:"instance_id"`       // 实例ID
+	Message     string `json:"message,omitempty"` // 可选消息
+	Timestamp   string `json:"timestamp"`         // 时间戳
+}
+
+// ServiceHeartbeatRequest 定义服务心跳请求结构
+type ServiceHeartbeatRequest struct {
+	TTL int `json:"ttl,omitempty"` // 可选的新TTL值
+}
+
+// ServiceHeartbeatResponse 定义服务心跳响应结构
+type ServiceHeartbeatResponse struct {
 	Success     bool   `json:"success"`           // 是否成功
 	ServiceName string `json:"service_name"`      // 服务名称
 	InstanceID  string `json:"instance_id"`       // 实例ID
@@ -298,6 +315,61 @@ func (h *EchoHandler) deregisterServiceHandler(c echo.Context) error {
 		ServiceName: serviceName,
 		InstanceID:  instanceID,
 		Message:     "服务注销成功",
+		Timestamp:   time.Now().Format(time.RFC3339),
+	})
+}
+
+// heartbeatServiceHandler 处理服务心跳请求
+func (h *EchoHandler) heartbeatServiceHandler(c echo.Context) error {
+	// 从URL参数中获取服务名和实例ID
+	serviceName := c.Param("serviceName")
+	instanceID := c.Param("instanceId")
+
+	// 验证参数
+	if serviceName == "" || instanceID == "" {
+		h.logger.Warn("服务心跳请求参数无效",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID))
+		return c.JSON(http.StatusBadRequest, &ServiceHeartbeatResponse{
+			Success:   false,
+			Message:   "请求参数无效：服务名和实例ID都是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 解析请求体中的TTL（如果有）
+	var req ServiceHeartbeatRequest
+	var ttl int
+	if err := c.Bind(&req); err == nil && req.TTL > 0 {
+		ttl = req.TTL
+	}
+
+	// 刷新服务实例的租约
+	ctx := c.Request().Context()
+	err := h.etcdClient.RefreshServiceLease(ctx, serviceName, instanceID, ttl)
+	if err != nil {
+		h.logger.Error("刷新服务实例租约失败",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceHeartbeatResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			InstanceID:  instanceID,
+			Message:     "刷新服务租约失败: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回成功响应
+	h.logger.Info("服务心跳成功",
+		zap.String("service", serviceName),
+		zap.String("id", instanceID))
+	return c.JSON(http.StatusOK, &ServiceHeartbeatResponse{
+		Success:     true,
+		ServiceName: serviceName,
+		InstanceID:  instanceID,
+		Message:     "服务租约刷新成功",
 		Timestamp:   time.Now().Format(time.RFC3339),
 	})
 }

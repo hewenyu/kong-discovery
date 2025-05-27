@@ -82,6 +82,12 @@ func (m *MockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string)
 	return nil, fmt.Errorf("服务不存在")
 }
 
+// RefreshServiceLease 模拟刷新服务租约的功能
+func (m *MockEtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
+	// 简单返回nil，因为测试不需要真正刷新租约
+	return nil
+}
+
 // 创建一个测试用的配置，使用环境变量中的etcd地址
 func createTestConfig(t *testing.T) *config.Config {
 	t.Helper()
