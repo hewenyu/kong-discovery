@@ -18,13 +18,13 @@
 ## 第一阶段：Go 后端 - 基础环境与核心 DNS 功能
 
 ### Go 项目初始化与基础配置
-- [ ] **1.1.** 初始化 Go Modules (`go mod init`)，创建项目基本目录结构 (e.g., `/cmd`, `/internal`, `/pkg`, `/configs`, `/api`)。
+- [x] **1.1.** 初始化 Go Modules (`go mod init`)，创建项目基本目录结构 (e.g., `/cmd`, `/internal`, `/pkg`, `/configs`, `/api`)。
     *   *测试*：确认目录结构正确，`go build` 空 `main` 函数能通过。
-- [ ] **1.2.** 集成 Zap 日志库：进行基础配置，提供一个全局可用的 logger 实例。
+- [x] **1.2.** 集成 Zap 日志库：进行基础配置，提供一个全局可用的 logger 实例。
     *   *测试*：编写简单的日志输出测试，验证日志格式和级别。
-- [ ] **1.3.** 配置管理模块 (`internal/config`)：实现从文件 (e.g., `config.yaml`) 或环境变量加载基础配置（如 etcd 地址、DNS 监听端口、管理 API 端口、服务注册 API 端口）。
+- [x] **1.3.** 配置管理模块 (`internal/config`)：实现从文件 (e.g., `config.yaml`) 或环境变量加载基础配置（如 etcd 地址、DNS 监听端口、管理 API 端口、服务注册 API 端口）。
     *   *测试*：单元测试配置加载逻辑，覆盖不同来源和缺失配置的情况。
-- [ ] **1.4.** etcd 客户端模块 (`internal/etcdclient`)：实现连接 etcd、检查连接状态 (Ping) 的基础功能。
+- [x] **1.4.** etcd 客户端模块 (`internal/etcdclient`)：实现连接 etcd、检查连接状态 (Ping) 的基础功能。
     *   *测试*：单元测试连接和 Ping etcd 的功能 (可能需要 mock etcd client 或连接到本地测试 etcd)。
 
 ### Echo 框架与 API 基础
