@@ -326,3 +326,75 @@ func TestEtcdClient_MultipleRecords(t *testing.T) {
 	assert.Equal(t, "2001:db8::1", records["AAAA"].Value)
 	assert.Equal(t, "v=spf1 -all", records["TXT"].Value)
 }
+
+func TestEtcdClient_RefreshServiceLease(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 创建配置和日志记录器
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建etcd客户端并连接
+	client := NewEtcdClient(cfg, logger)
+	err := client.Connect()
+	require.NoError(t, err, "连接etcd应该成功")
+
+	// 确保在测试结束时关闭连接
+	defer func() {
+		err := client.Close()
+		assert.NoError(t, err, "关闭etcd连接应该成功")
+	}()
+
+	// 创建测试服务实例，使用较短的TTL以便测试刷新功能
+	testService := &ServiceInstance{
+		ServiceName: "refresh-service",
+		InstanceID:  "refresh-instance-001",
+		IPAddress:   "192.168.1.101",
+		Port:        8080,
+		Metadata: map[string]string{
+			"version": "1.0.0",
+			"region":  "cn-north",
+		},
+		TTL: 10, // 使用较短的TTL
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 首先注册服务实例
+	err = client.RegisterService(ctx, testService)
+	assert.NoError(t, err, "注册服务实例应该成功")
+
+	// 延迟一小段时间，确保服务已经注册
+	time.Sleep(1 * time.Second)
+
+	// 刷新服务实例的租约，将TTL更新为新值
+	newTTL := 30
+	err = client.RefreshServiceLease(ctx, testService.ServiceName, testService.InstanceID, newTTL)
+	assert.NoError(t, err, "刷新服务实例租约应该成功")
+
+	// 获取服务实例，验证TTL已更新
+	instances, err := client.GetServiceInstances(ctx, testService.ServiceName)
+	assert.NoError(t, err, "获取服务实例列表应该成功")
+	assert.NotEmpty(t, instances, "应该返回至少一个服务实例")
+
+	var found bool
+	for _, instance := range instances {
+		if instance.InstanceID == testService.InstanceID {
+			found = true
+			assert.Equal(t, testService.ServiceName, instance.ServiceName)
+			assert.Equal(t, testService.IPAddress, instance.IPAddress)
+			assert.Equal(t, testService.Port, instance.Port)
+			assert.Equal(t, newTTL, instance.TTL, "TTL应该已经更新为新值")
+			break
+		}
+	}
+	assert.True(t, found, "应该找到注册的服务实例")
+
+	// 测试完成后，注销服务实例
+	err = client.DeregisterService(ctx, testService.ServiceName, testService.InstanceID)
+	assert.NoError(t, err, "注销服务实例应该成功")
+}
