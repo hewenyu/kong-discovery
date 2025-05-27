@@ -1,0 +1,23 @@
+etcd:
+  endpoints:
+    - localhost:2379
+  username: ""
+  password: ""
+
+dns:
+  listen_address: "0.0.0.0"
+  port: 53
+  protocol: "both"  # "udp", "tcp", or "both"
+  upstream_dns: "8.8.8.8:53"
+
+api:
+  management:
+    listen_address: "0.0.0.0"
+    port: 8080
+  registration:
+    listen_address: "0.0.0.0"
+    port: 8081
+
+log:
+  level: "info"
+  development: true 
