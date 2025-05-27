@@ -56,7 +56,7 @@
     *   *测试*：单元测试租约刷新。
 
 ### 服务注册 API 端点 (Echo)
-- [ ] **2.5.** `apihandler` 模块：在**服务注册 API 端口**上，设计并实现服务注册 API 端点 (`POST /services/register`)。接收服务注册信息，调用 `etcdclient` 写入 etcd。
+- [x] **2.5.** `apihandler` 模块：在**服务注册 API 端口**上，设计并实现服务注册 API 端点 (`POST /services/register`)。接收服务注册信息，调用 `etcdclient` 写入 etcd。
     *   *测试*：集成测试，通过 API 注册服务，然后检查 etcd 中是否出现对应数据，并验证 DNS 解析（复用任务 1.9 的测试逻辑）。
 - [ ] **2.6.** `apihandler` 模块：在**服务注册 API 端口**上，实现服务注销 API 端点 (`DELETE /services/{serviceName}/{instanceId}`)。调用 `etcdclient` 从 etcd 删除。
     *   *测试*：集成测试，注册服务 -> API 注销服务 -> 检查 etcd 数据 -> 验证 DNS 解析不再返回该实例。

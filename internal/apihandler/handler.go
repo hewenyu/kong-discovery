@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/config"
+	"github.com/hewenyu/kong-discovery/internal/etcdclient"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
@@ -30,13 +31,15 @@ type EchoHandler struct {
 	registrationServer *echo.Echo
 	cfg                *config.Config
 	logger             config.Logger
+	etcdClient         etcdclient.Client
 }
 
 // NewAPIHandler 创建一个新的API处理器
-func NewAPIHandler(cfg *config.Config, logger config.Logger) Handler {
+func NewAPIHandler(cfg *config.Config, logger config.Logger, etcdClient etcdclient.Client) Handler {
 	return &EchoHandler{
-		cfg:    cfg,
-		logger: logger,
+		cfg:        cfg,
+		logger:     logger,
+		etcdClient: etcdClient,
 	}
 }
 
@@ -144,5 +147,97 @@ func (h *EchoHandler) registerRegistrationRoutes() {
 		})
 	})
 
+	// 服务注册端点
+	h.registrationServer.POST("/services/register", h.registerServiceHandler)
+
 	// 服务注册API的其他端点将在后续任务中添加
+}
+
+// ServiceRegistrationRequest 定义服务注册请求结构
+type ServiceRegistrationRequest struct {
+	ServiceName string            `json:"service_name" validate:"required"` // 服务名称
+	InstanceID  string            `json:"instance_id" validate:"required"`  // 实例ID
+	IPAddress   string            `json:"ip_address" validate:"required"`   // IP地址
+	Port        int               `json:"port" validate:"required"`         // 端口
+	TTL         int               `json:"ttl" validate:"required"`          // 租约TTL（秒）
+	Metadata    map[string]string `json:"metadata,omitempty"`               // 可选元数据
+}
+
+// ServiceRegistrationResponse 定义服务注册响应结构
+type ServiceRegistrationResponse struct {
+	Success     bool   `json:"success"`           // 是否成功
+	ServiceName string `json:"service_name"`      // 服务名称
+	InstanceID  string `json:"instance_id"`       // 实例ID
+	Message     string `json:"message,omitempty"` // 可选消息
+	Timestamp   string `json:"timestamp"`         // 时间戳
+}
+
+// registerServiceHandler 处理服务注册请求
+func (h *EchoHandler) registerServiceHandler(c echo.Context) error {
+	// 解析请求
+	req := new(ServiceRegistrationRequest)
+	if err := c.Bind(req); err != nil {
+		h.logger.Error("解析服务注册请求失败", zap.Error(err))
+		return c.JSON(http.StatusBadRequest, &ServiceRegistrationResponse{
+			Success:   false,
+			Message:   "请求格式错误: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证请求
+	if req.ServiceName == "" || req.InstanceID == "" || req.IPAddress == "" || req.Port <= 0 {
+		h.logger.Warn("服务注册请求参数无效",
+			zap.String("service", req.ServiceName),
+			zap.String("id", req.InstanceID))
+		return c.JSON(http.StatusBadRequest, &ServiceRegistrationResponse{
+			Success:   false,
+			Message:   "请求参数无效：服务名、实例ID、IP地址和端口都是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 设置默认TTL
+	if req.TTL <= 0 {
+		req.TTL = 60 // 默认60秒
+	}
+
+	// 转换为服务实例
+	instance := &etcdclient.ServiceInstance{
+		ServiceName: req.ServiceName,
+		InstanceID:  req.InstanceID,
+		IPAddress:   req.IPAddress,
+		Port:        req.Port,
+		Metadata:    req.Metadata,
+		TTL:         req.TTL,
+	}
+
+	// 注册服务
+	ctx := c.Request().Context()
+	err := h.etcdClient.RegisterService(ctx, instance)
+	if err != nil {
+		h.logger.Error("注册服务实例失败",
+			zap.String("service", req.ServiceName),
+			zap.String("id", req.InstanceID),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceRegistrationResponse{
+			Success:     false,
+			ServiceName: req.ServiceName,
+			InstanceID:  req.InstanceID,
+			Message:     "注册服务失败: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回成功响应
+	h.logger.Info("服务注册成功",
+		zap.String("service", req.ServiceName),
+		zap.String("id", req.InstanceID))
+	return c.JSON(http.StatusOK, &ServiceRegistrationResponse{
+		Success:     true,
+		ServiceName: req.ServiceName,
+		InstanceID:  req.InstanceID,
+		Message:     "服务注册成功",
+		Timestamp:   time.Now().Format(time.RFC3339),
+	})
 }

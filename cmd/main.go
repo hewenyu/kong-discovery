@@ -73,7 +73,7 @@ func main() {
 	logger.Info("etcd连接成功并通过健康检查")
 
 	// 初始化并启动API处理器
-	apiHandler := apihandler.NewAPIHandler(appConfig, logger)
+	apiHandler := apihandler.NewAPIHandler(appConfig, logger, etcdClient)
 
 	// 启动管理API服务
 	if err := apiHandler.StartManagementAPI(); err != nil {
