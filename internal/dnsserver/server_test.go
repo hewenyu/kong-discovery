@@ -55,6 +55,33 @@ func (m *MockEtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain stri
 	return nil, nil
 }
 
+// 实现剩余的接口方法
+func (m *MockEtcdClient) RegisterService(ctx context.Context, instance *etcdclient.ServiceInstance) error {
+	return nil
+}
+
+func (m *MockEtcdClient) DeregisterService(ctx context.Context, serviceName, instanceID string) error {
+	return nil
+}
+
+func (m *MockEtcdClient) GetServiceInstances(ctx context.Context, serviceName string) ([]*etcdclient.ServiceInstance, error) {
+	return nil, nil
+}
+
+func (m *MockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
+	// 为test.etcd.local域名返回模拟的DNS记录
+	if domain == "test.etcd.local" {
+		records := make(map[string]*etcdclient.DNSRecord)
+		records["A"] = &etcdclient.DNSRecord{
+			Type:  "A",
+			Value: "5.6.7.8",
+			TTL:   300,
+		}
+		return records, nil
+	}
+	return nil, fmt.Errorf("服务不存在")
+}
+
 // 创建一个测试用的配置，使用环境变量中的etcd地址
 func createTestConfig(t *testing.T) *config.Config {
 	t.Helper()
@@ -156,9 +183,6 @@ func TestDNSServer_QueryHardcodedRecord(t *testing.T) {
 }
 
 func TestDNSServer_QueryEtcdRecord(t *testing.T) {
-	// 跳过集成测试如果环境变量设置
-	// TODO: 实现基于环境变量跳过集成测试的逻辑
-
 	// 准备测试配置
 	cfg := &config.Config{}
 	cfg.DNS.ListenAddress = "127.0.0.1"
@@ -169,13 +193,8 @@ func TestDNSServer_QueryEtcdRecord(t *testing.T) {
 	server := NewDNSServer(cfg, &MockLogger{})
 
 	// 设置模拟的etcd客户端
-	etcdConfig := createTestConfig(t)
-
-	logger := createTestLogger(t)
-
-	// 创建etcd客户端并连接
-	client := etcdclient.NewEtcdClient(etcdConfig, logger)
-	server.SetEtcdClient(client)
+	mockClient := &MockEtcdClient{}
+	server.SetEtcdClient(mockClient)
 
 	err := server.Start()
 	require.NoError(t, err)
