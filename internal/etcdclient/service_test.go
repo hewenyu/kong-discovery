@@ -8,17 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zapcore"
 )
-
-// mockLogger 实现config.Logger接口，用于测试
-type mockLogger struct{}
-
-func (l *mockLogger) Debug(msg string, fields ...zapcore.Field) {}
-func (l *mockLogger) Info(msg string, fields ...zapcore.Field)  {}
-func (l *mockLogger) Warn(msg string, fields ...zapcore.Field)  {}
-func (l *mockLogger) Error(msg string, fields ...zapcore.Field) {}
-func (l *mockLogger) Fatal(msg string, fields ...zapcore.Field) {}
 
 // TestServiceToDNSRecords 测试将服务实例转换为DNS记录的功能
 func TestServiceToDNSRecords(t *testing.T) {

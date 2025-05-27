@@ -24,10 +24,13 @@ kong-discovery/
 │   │   ├── config_test.go  # 配置模块测试
 │   │   ├── logger.go       # 日志接口和实现
 │   │   └── logger_test.go  # 日志模块测试
-│   ├── dnsserver/         # DNS服务器模块（待实现）
+│   ├── dnsserver/         # DNS服务器模块
+│   │   ├── server.go      # DNS服务器接口和实现
+│   │   └── server_test.go # DNS服务器测试
 │   └── etcdclient/        # etcd客户端模块
-│       ├── client.go      # etcd客户端接口和实现
-│       └── client_test.go # etcd客户端测试
+│       ├── client.go      # etcd客户端接口和基本实现
+│       ├── client_test.go # etcd客户端测试
+│       └── service.go     # 服务发现相关功能实现
 ├── git.md                 # Git相关文档
 ├── go.mod                 # Go模块定义
 ├── go.sum                 # Go模块依赖校验和
@@ -56,9 +59,12 @@ kong-discovery/
    - 定义了完整的配置结构
    - 完成了单元测试
 
-4. **etcd客户端模块** (任务1.4)
+4. **etcd客户端模块** (任务1.4, 1.8, 2.1-2.4)
    - 实现了etcd连接与交互的接口
    - 实现了基本操作（连接、Ping、Get、GetWithPrefix）
+   - 实现了DNS记录存储与查询功能
+   - 实现了服务注册、注销和查询功能
+   - 实现了服务实例到DNS记录的转换
    - 完成了集成测试
 
 5. **API处理器模块** (任务1.5, 1.6)
@@ -67,14 +73,29 @@ kong-discovery/
    - 实现服务注册API端口监听与健康检查端点
    - 完成了单元测试
 
+6. **DNS服务器模块** (任务1.7, 1.9)
+   - 使用`miekg/dns`库实现基础DNS服务器
+   - 支持硬编码DNS记录响应
+   - 支持从etcd读取DNS记录
+   - 支持服务发现DNS查询（A记录和SRV记录）
+   - 完成了单元测试
+
 ## 下一步开发计划
 
 即将开始开发的模块:
 
-1. **DNS服务器模块** (任务1.7)
-   - 使用 `miekg/dns` 库搭建基础DNS服务器
-   - 实现硬编码DNS记录响应
-   - 实现DNS端口监听
+1. **DNS转发功能** (任务1.10)
+   - 实现向上游DNS服务器转发未知域名的查询逻辑
+   - 配置上游DNS服务器
+
+2. **服务注册API端点** (任务2.5-2.7)
+   - 实现服务注册API
+   - 实现服务注销API
+   - 实现服务心跳API
+
+3. **动态服务发现** (任务2.8-2.9)
+   - 实现etcd Watcher监听服务变化
+   - 实现DNS服务器动态更新
 
 ## 依赖库
 
@@ -84,6 +105,7 @@ kong-discovery/
 - `github.com/spf13/viper` - 配置管理
 - `go.etcd.io/etcd/client/v3` - etcd客户端
 - `github.com/labstack/echo/v4` - Web框架
+- `github.com/miekg/dns` - DNS服务器库
 - `github.com/stretchr/testify` - 测试辅助库
 
 ## 设计原则
@@ -99,4 +121,5 @@ kong-discovery/
 - 日志模块: 单元测试
 - 配置模块: 单元测试
 - etcd客户端: 集成测试
-- API处理器: 单元测试 
+- API处理器: 单元测试
+- DNS服务器: 单元测试 

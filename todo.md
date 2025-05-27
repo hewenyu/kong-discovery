@@ -34,11 +34,11 @@
     *   *测试*：启动服务后，确认两个端口都能独立响应健康的检查端点。
 
 ### 核心 DNS 服务
-- [ ] **1.7.** DNS 服务器模块 (`internal/dnsserver`)：使用 `miekg/dns` 库搭建基础 DNS 服务器，监听配置的 DNS 端口 (UDP/53)。
+- [x] **1.7.** DNS 服务器模块 (`internal/dnsserver`)：使用 `miekg/dns` 库搭建基础 DNS 服务器，监听配置的 DNS 端口 (UDP/53)。
     *   *测试*：实现一个硬编码的 DNS 记录响应 (e.g., `test.local A 1.2.3.4`)，使用 `dig` 或 `nslookup` 查询并验证结果。
-- [ ] **1.8.** `etcdclient` 模块：实现从 etcd 读取一个指定 key 的 PoC (Proof of Concept) 功能 (用于后续服务发现)。
+- [x] **1.8.** `etcdclient` 模块：实现从 etcd 读取一个指定 key 的 PoC (Proof of Concept) 功能 (用于后续服务发现)。
     *   *测试*：单元测试从 etcd 读取特定 key-value 的逻辑。
-- [ ] **1.9.** `dnsserver` 模块：集成 `etcdclient`，修改 DNS 处理逻辑，尝试从 etcd 读取服务信息 (基于查询的域名构造 etcd key) 并响应 A/SRV 记录。
+- [x] **1.9.** `dnsserver` 模块：集成 `etcdclient`，修改 DNS 处理逻辑，尝试从 etcd 读取服务信息 (基于查询的域名构造 etcd key) 并响应 A/SRV 记录。
     *   *测试*：在 etcd 中预设服务数据，通过 `dig` 查询对应域名，验证 DNS 解析结果是否与 etcd 数据一致。
 - [ ] **1.10.** `dnsserver` 模块：实现向上游 DNS 服务器转发未知域名的查询逻辑。
     *   *测试*：配置上游 DNS，查询一个外部域名，验证是否能正确从上游获取结果。
@@ -46,13 +46,13 @@
 ## 第二阶段：Go 后端 - 服务注册 API 与动态发现
 
 ### 服务注册逻辑 (etcd 持久化)
-- [ ] **2.1.** `etcdclient` 模块：设计服务在 etcd 中存储的 key 结构和 value (JSON) 格式。
+- [x] **2.1.** `etcdclient` 模块：设计服务在 etcd 中存储的 key 结构和 value (JSON) 格式。
     *   *测试*：文档评审，确保设计合理。
-- [ ] **2.2.** `etcdclient` 模块：实现将服务信息写入 etcd 的核心逻辑，包括使用租约 (Lease) 和 TTL。
+- [x] **2.2.** `etcdclient` 模块：实现将服务信息写入 etcd 的核心逻辑，包括使用租约 (Lease) 和 TTL。
     *   *测试*：单元测试服务信息写入、租约创建和 TTL 设置。
-- [ ] **2.3.** `etcdclient` 模块：实现从 etcd 删除服务信息的逻辑。
+- [x] **2.3.** `etcdclient` 模块：实现从 etcd 删除服务信息的逻辑。
     *   *测试*：单元测试服务信息删除。
-- [ ] **2.4.** `etcdclient` 模块：实现刷新服务租约（心跳）的逻辑。
+- [x] **2.4.** `etcdclient` 模块：实现刷新服务租约（心跳）的逻辑。
     *   *测试*：单元测试租约刷新。
 
 ### 服务注册 API 端点 (Echo)
