@@ -3,6 +3,7 @@ package dnsserver
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -52,6 +53,33 @@ func (m *MockEtcdClient) PutDNSRecord(ctx context.Context, domain string, record
 
 func (m *MockEtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
 	return nil, nil
+}
+
+// 创建一个测试用的配置，使用环境变量中的etcd地址
+func createTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+
+	// 从环境变量中获取etcd地址
+	etcdEndpoints := os.Getenv("KONG_DISCOVERY_ETCD_ENDPOINTS")
+	require.NotEmpty(t, etcdEndpoints, "环境变量KONG_DISCOVERY_ETCD_ENDPOINTS必须设置")
+
+	// 创建配置
+	cfg := &config.Config{}
+	cfg.Etcd.Endpoints = []string{etcdEndpoints}
+	cfg.Etcd.Username = "" // 如果需要认证，设置相应的值
+	cfg.Etcd.Password = "" // 如果需要认证，设置相应的值
+
+	return cfg
+}
+
+// 创建测试用的日志记录器
+func createTestLogger(t *testing.T) config.Logger {
+	t.Helper()
+
+	logger, err := config.NewLogger(true)
+	require.NoError(t, err, "创建测试日志记录器失败")
+
+	return logger
 }
 
 func TestDNSServer_StartAndShutdown(t *testing.T) {
@@ -141,8 +169,13 @@ func TestDNSServer_QueryEtcdRecord(t *testing.T) {
 	server := NewDNSServer(cfg, &MockLogger{})
 
 	// 设置模拟的etcd客户端
-	mockEtcdClient := &MockEtcdClient{}
-	server.SetEtcdClient(mockEtcdClient)
+	etcdConfig := createTestConfig(t)
+
+	logger := createTestLogger(t)
+
+	// 创建etcd客户端并连接
+	client := etcdclient.NewEtcdClient(etcdConfig, logger)
+	server.SetEtcdClient(client)
 
 	err := server.Start()
 	require.NoError(t, err)
