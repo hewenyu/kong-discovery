@@ -297,6 +297,108 @@ func TestServiceRegistration_BadRequest(t *testing.T) {
 	assert.Contains(t, response.Message, "请求格式错误")
 }
 
+func TestServiceDeregistration(t *testing.T) {
+	// 准备测试配置
+	cfg := &config.Config{}
+	cfg.API.Registration.ListenAddress = "localhost"
+	cfg.API.Registration.Port = 8081
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建模拟etcd客户端
+	mockEtcd := NewMockEtcdClient()
+
+	// 先注册一个服务实例
+	ctx := context.Background()
+	testInstance := &etcdclient.ServiceInstance{
+		ServiceName: "test-service",
+		InstanceID:  "instance-001",
+		IPAddress:   "192.168.1.100",
+		Port:        8080,
+		TTL:         60,
+	}
+	err := mockEtcd.RegisterService(ctx, testInstance)
+	require.NoError(t, err)
+
+	// 验证服务已注册
+	instances, err := mockEtcd.GetServiceInstances(ctx, "test-service")
+	require.NoError(t, err)
+	require.Len(t, instances, 1)
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		registrationServer: e,
+		cfg:                cfg,
+		logger:             &MockLogger{},
+		etcdClient:         mockEtcd,
+	}
+	handler.registerRegistrationRoutes()
+
+	// 准备注销请求
+	req := httptest.NewRequest(http.MethodDelete, "/services/test-service/instance-001", nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response ServiceDeregistrationResponse
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Equal(t, "test-service", response.ServiceName)
+	assert.Equal(t, "instance-001", response.InstanceID)
+	assert.Equal(t, "服务注销成功", response.Message)
+
+	// 验证服务已被注销
+	instances, err = mockEtcd.GetServiceInstances(ctx, "test-service")
+	require.NoError(t, err)
+	assert.Len(t, instances, 0)
+}
+
+func TestServiceDeregistration_NotFound(t *testing.T) {
+	// 准备测试配置
+	cfg := &config.Config{}
+	cfg.API.Registration.ListenAddress = "localhost"
+	cfg.API.Registration.Port = 8081
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建模拟etcd客户端
+	mockEtcd := NewMockEtcdClient()
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		registrationServer: e,
+		cfg:                cfg,
+		logger:             &MockLogger{},
+		etcdClient:         mockEtcd,
+	}
+	handler.registerRegistrationRoutes()
+
+	// 准备注销请求 - 尝试注销不存在的服务
+	req := httptest.NewRequest(http.MethodDelete, "/services/non-existent-service/instance-001", nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应 - 即使服务不存在，也应该返回成功
+	// 这是因为幂等性原则，多次删除同一资源应该是安全的
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response ServiceDeregistrationResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+}
+
 func TestShutdown(t *testing.T) {
 	// 准备测试配置
 	cfg := &config.Config{}
