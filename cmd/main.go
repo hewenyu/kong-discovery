@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hewenyu/kong-discovery/internal/apihandler"
 	"github.com/hewenyu/kong-discovery/internal/config"
 	"github.com/hewenyu/kong-discovery/internal/dnsserver"
@@ -92,13 +93,11 @@ func main() {
 		zap.String("address", appConfig.API.Registration.ListenAddress),
 		zap.Int("port", appConfig.API.Registration.Port))
 
-	// 初始化DNS服务器并注入etcd客户端
-	dnsServer := dnsserver.NewDNSServer(appConfig, logger)
-	dnsServer.SetEtcdClient(etcdClient)
-
 	// 创建测试DNS记录
 	testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer testCancel()
+
+	// 1. 创建常规DNS记录
 	testRecord := &etcdclient.DNSRecord{
 		Type:  "A",
 		Value: "192.168.1.100",
@@ -109,6 +108,32 @@ func main() {
 	} else {
 		logger.Info("创建测试DNS记录成功", zap.String("domain", "kong.test"))
 	}
+
+	// 2. 注册服务实例
+	instanceID := uuid.New().String()
+	serviceInstance := &etcdclient.ServiceInstance{
+		ServiceName: "nginx",
+		InstanceID:  instanceID,
+		IPAddress:   "192.168.1.200",
+		Port:        8080,
+		Metadata: map[string]string{
+			"version": "1.0.0",
+			"env":     "test",
+		},
+		TTL: 60,
+	}
+
+	if err := etcdClient.RegisterService(testCtx, serviceInstance); err != nil {
+		logger.Warn("注册测试服务实例失败", zap.Error(err))
+	} else {
+		logger.Info("注册测试服务实例成功",
+			zap.String("service", serviceInstance.ServiceName),
+			zap.String("id", serviceInstance.InstanceID))
+	}
+
+	// 初始化DNS服务器并注入etcd客户端
+	dnsServer := dnsserver.NewDNSServer(appConfig, logger)
+	dnsServer.SetEtcdClient(etcdClient)
 
 	// 启动DNS服务器
 	if err := dnsServer.Start(); err != nil {

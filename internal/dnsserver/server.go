@@ -13,6 +13,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// 服务域名后缀，用于识别服务域名
+const serviceDomainSuffix = ".svc.cluster.local"
+
 // Server 定义DNS服务器接口
 type Server interface {
 	// Start 启动DNS服务器
@@ -196,10 +199,86 @@ func (s *DNSServer) handleQuery(q dns.Question, m *dns.Msg) bool {
 		return false
 	}
 
-	// 4. 根据记录类型查询etcd
-	ctx := context.Background()
-	recordType := dns.TypeToString[q.Qtype]
+	// 4. 检查是否为服务域名（以.svc.cluster.local结尾）
+	if strings.HasSuffix(domain, serviceDomainSuffix) {
+		return s.handleServiceQuery(domain, q.Qtype, m)
+	}
 
+	// 5. 处理常规DNS记录查询
+	return s.handleRegularDNSQuery(domain, q.Qtype, m)
+}
+
+// handleServiceQuery 处理服务发现查询
+func (s *DNSServer) handleServiceQuery(domain string, qtype uint16, m *dns.Msg) bool {
+	ctx := context.Background()
+
+	// 如果请求的是SRV记录，我们需要特别处理
+	if qtype == dns.TypeSRV {
+		return s.handleSRVQuery(domain, m)
+	}
+
+	// 对于A记录，我们返回服务的IP地址
+	if qtype == dns.TypeA {
+		records, err := s.etcdClient.ServiceToDNSRecords(ctx, domain)
+		if err != nil {
+			s.logger.Debug("获取服务DNS记录失败",
+				zap.String("domain", domain),
+				zap.Error(err))
+			return false
+		}
+
+		// 查找A记录
+		if aRecord, ok := records["A"]; ok {
+			rr, err := dns.NewRR(fmt.Sprintf("%s. A %s", domain, aRecord.Value))
+			if err != nil {
+				s.logger.Error("创建A记录失败", zap.Error(err))
+				return false
+			}
+			m.Answer = append(m.Answer, rr)
+			return true
+		}
+	}
+
+	return false
+}
+
+// handleSRVQuery 处理SRV查询
+func (s *DNSServer) handleSRVQuery(domain string, m *dns.Msg) bool {
+	ctx := context.Background()
+
+	// 获取服务的DNS记录
+	records, err := s.etcdClient.ServiceToDNSRecords(ctx, domain)
+	if err != nil {
+		s.logger.Debug("获取服务DNS记录失败",
+			zap.String("domain", domain),
+			zap.Error(err))
+		return false
+	}
+
+	// 添加所有SRV记录
+	added := false
+	for key, record := range records {
+		if strings.HasPrefix(key, "SRV-") {
+			rr, err := dns.NewRR(fmt.Sprintf("%s. SRV %s", domain, record.Value))
+			if err != nil {
+				s.logger.Error("创建SRV记录失败", zap.Error(err))
+				continue
+			}
+			m.Answer = append(m.Answer, rr)
+			added = true
+		}
+	}
+
+	return added
+}
+
+// handleRegularDNSQuery 处理常规DNS记录查询
+func (s *DNSServer) handleRegularDNSQuery(domain string, qtype uint16, m *dns.Msg) bool {
+	// 获取记录类型字符串
+	recordType := dns.TypeToString[qtype]
+
+	// 从etcd获取DNS记录
+	ctx := context.Background()
 	record, err := s.etcdClient.GetDNSRecord(ctx, domain, recordType)
 	if err != nil {
 		s.logger.Debug("从etcd获取DNS记录失败",
@@ -209,8 +288,8 @@ func (s *DNSServer) handleQuery(q dns.Question, m *dns.Msg) bool {
 		return false
 	}
 
-	// 5. 创建适当的DNS记录响应
-	switch q.Qtype {
+	// 创建适当的DNS记录响应
+	switch qtype {
 	case dns.TypeA:
 		rr, err := dns.NewRR(fmt.Sprintf("%s. A %s", domain, record.Value))
 		if err != nil {

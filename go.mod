@@ -3,6 +3,7 @@ module github.com/hewenyu/kong-discovery
 go 1.24.3
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/miekg/dns v1.1.66
 	github.com/spf13/viper v1.20.1

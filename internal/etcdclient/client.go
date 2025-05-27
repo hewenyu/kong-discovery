@@ -11,6 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// etcd操作的超时时间
+const etcdTimeout = 5 * time.Second
+
 // DNSRecord 表示存储在etcd中的DNS记录
 type DNSRecord struct {
 	Type  string   `json:"type"`           // 记录类型 (A, AAAA, SRV, CNAME等)
@@ -44,6 +47,18 @@ type Client interface {
 
 	// GetDNSRecordsForDomain 获取域名的所有DNS记录
 	GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*DNSRecord, error)
+
+	// RegisterService 将服务实例注册到etcd
+	RegisterService(ctx context.Context, instance *ServiceInstance) error
+
+	// DeregisterService 从etcd注销服务实例
+	DeregisterService(ctx context.Context, serviceName, instanceID string) error
+
+	// GetServiceInstances 获取指定服务的所有实例
+	GetServiceInstances(ctx context.Context, serviceName string) ([]*ServiceInstance, error)
+
+	// ServiceToDNSRecords 将服务实例转换为DNS记录
+	ServiceToDNSRecords(ctx context.Context, domain string) (map[string]*DNSRecord, error)
 }
 
 // EtcdClient 实现Client接口
