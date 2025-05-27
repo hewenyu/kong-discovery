@@ -2,7 +2,6 @@ package dnsserver
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -12,81 +11,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zapcore"
 )
-
-// MockLogger 实现config.Logger接口，用于测试
-type MockLogger struct{}
-
-func (l *MockLogger) Debug(msg string, fields ...zapcore.Field) {}
-func (l *MockLogger) Info(msg string, fields ...zapcore.Field)  {}
-func (l *MockLogger) Warn(msg string, fields ...zapcore.Field)  {}
-func (l *MockLogger) Error(msg string, fields ...zapcore.Field) {}
-func (l *MockLogger) Fatal(msg string, fields ...zapcore.Field) {}
-
-// MockEtcdClient 实现etcdclient.Client接口，用于测试
-type MockEtcdClient struct{}
-
-func (m *MockEtcdClient) Connect() error                                      { return nil }
-func (m *MockEtcdClient) Close() error                                        { return nil }
-func (m *MockEtcdClient) Ping(ctx context.Context) error                      { return nil }
-func (m *MockEtcdClient) Get(ctx context.Context, key string) (string, error) { return "", nil }
-func (m *MockEtcdClient) GetWithPrefix(ctx context.Context, prefix string) (map[string]string, error) {
-	return nil, nil
-}
-
-func (m *MockEtcdClient) GetDNSRecord(ctx context.Context, domain string, recordType string) (*etcdclient.DNSRecord, error) {
-	// 模拟test.etcd.local的A记录
-	if domain == "test.etcd.local" && recordType == "A" {
-		return &etcdclient.DNSRecord{
-			Type:  "A",
-			Value: "5.6.7.8",
-			TTL:   300,
-		}, nil
-	}
-	return nil, fmt.Errorf("记录不存在")
-}
-
-func (m *MockEtcdClient) PutDNSRecord(ctx context.Context, domain string, record *etcdclient.DNSRecord) error {
-	return nil
-}
-
-func (m *MockEtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
-	return nil, nil
-}
-
-// 实现剩余的接口方法
-func (m *MockEtcdClient) RegisterService(ctx context.Context, instance *etcdclient.ServiceInstance) error {
-	return nil
-}
-
-func (m *MockEtcdClient) DeregisterService(ctx context.Context, serviceName, instanceID string) error {
-	return nil
-}
-
-func (m *MockEtcdClient) GetServiceInstances(ctx context.Context, serviceName string) ([]*etcdclient.ServiceInstance, error) {
-	return nil, nil
-}
-
-func (m *MockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
-	// 为test.etcd.local域名返回模拟的DNS记录
-	if domain == "test.etcd.local" {
-		records := make(map[string]*etcdclient.DNSRecord)
-		records["A"] = &etcdclient.DNSRecord{
-			Type:  "A",
-			Value: "5.6.7.8",
-			TTL:   300,
-		}
-		return records, nil
-	}
-	return nil, fmt.Errorf("服务不存在")
-}
-
-// RefreshServiceLease 模拟刷新服务租约的功能
-func (m *MockEtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
-	// 简单返回nil，因为测试不需要真正刷新租约
-	return nil
-}
 
 // 创建一个测试用的配置，使用环境变量中的etcd地址
 func createTestConfig(t *testing.T) *config.Config {
