@@ -32,3 +32,5 @@ go.work.sum
 git.md
 
 kong-discovery
+
+.venv
