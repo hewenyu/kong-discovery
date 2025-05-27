@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hewenyu/kong-discovery/internal/apihandler"
 	"github.com/hewenyu/kong-discovery/internal/config"
 	"github.com/hewenyu/kong-discovery/internal/etcdclient"
 	"go.uber.org/zap"
@@ -69,10 +70,38 @@ func main() {
 	}
 	logger.Info("etcd连接成功并通过健康检查")
 
+	// 初始化并启动API处理器
+	apiHandler := apihandler.NewAPIHandler(appConfig, logger)
+
+	// 启动管理API服务
+	if err := apiHandler.StartManagementAPI(); err != nil {
+		logger.Error("启动管理API服务失败", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Info("管理API服务启动成功",
+		zap.String("address", appConfig.API.Management.ListenAddress),
+		zap.Int("port", appConfig.API.Management.Port))
+
+	// 启动服务注册API服务
+	if err := apiHandler.StartRegistrationAPI(); err != nil {
+		logger.Error("启动服务注册API服务失败", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Info("服务注册API服务启动成功",
+		zap.String("address", appConfig.API.Registration.ListenAddress),
+		zap.Int("port", appConfig.API.Registration.Port))
+
 	// 等待信号以优雅关闭
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	logger.Info("接收到关闭信号，正在优雅关闭...")
+
+	// 优雅关闭API服务
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := apiHandler.Shutdown(shutdownCtx); err != nil {
+		logger.Error("关闭API服务失败", zap.Error(err))
+	}
 }
