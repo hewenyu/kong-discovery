@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/config"
+	"github.com/hewenyu/kong-discovery/internal/etcdclient"
 	"go.uber.org/zap"
 )
 
@@ -46,4 +51,28 @@ func main() {
 		zap.Int("management_api_port", appConfig.API.Management.Port),
 		zap.Int("registration_api_port", appConfig.API.Registration.Port),
 	)
+
+	// 初始化etcd客户端
+	etcdClient := etcdclient.NewEtcdClient(appConfig, logger)
+	if err := etcdClient.Connect(); err != nil {
+		logger.Error("连接etcd失败", zap.Error(err))
+		os.Exit(1)
+	}
+	defer etcdClient.Close()
+
+	// 检查etcd连接状态
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := etcdClient.Ping(ctx); err != nil {
+		logger.Error("etcd健康检查失败", zap.Error(err))
+		os.Exit(1)
+	}
+	logger.Info("etcd连接成功并通过健康检查")
+
+	// 等待信号以优雅关闭
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	logger.Info("接收到关闭信号，正在优雅关闭...")
 }
