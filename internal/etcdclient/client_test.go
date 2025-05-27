@@ -2,41 +2,12 @@ package etcdclient
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/hewenyu/kong-discovery/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// 创建一个测试用的配置，使用环境变量中的etcd地址
-func createTestConfig(t *testing.T) *config.Config {
-	t.Helper()
-
-	// 从环境变量中获取etcd地址
-	etcdEndpoints := os.Getenv("KONG_DISCOVERY_ETCD_ENDPOINTS")
-	require.NotEmpty(t, etcdEndpoints, "环境变量KONG_DISCOVERY_ETCD_ENDPOINTS必须设置")
-
-	// 创建配置
-	cfg := &config.Config{}
-	cfg.Etcd.Endpoints = []string{etcdEndpoints}
-	cfg.Etcd.Username = "" // 如果需要认证，设置相应的值
-	cfg.Etcd.Password = "" // 如果需要认证，设置相应的值
-
-	return cfg
-}
-
-// 创建测试用的日志记录器
-func createTestLogger(t *testing.T) config.Logger {
-	t.Helper()
-
-	logger, err := config.NewLogger(true)
-	require.NoError(t, err, "创建测试日志记录器失败")
-
-	return logger
-}
 
 func TestEtcdClient_Connect(t *testing.T) {
 	// 跳过集成测试，除非明确要求运行

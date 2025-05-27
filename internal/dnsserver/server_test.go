@@ -101,6 +101,9 @@ func createTestConfig(t *testing.T) *config.Config {
 	cfg.Etcd.Endpoints = []string{etcdEndpoints}
 	cfg.Etcd.Username = "" // 如果需要认证，设置相应的值
 	cfg.Etcd.Password = "" // 如果需要认证，设置相应的值
+	cfg.DNS.ListenAddress = "127.0.0.1"
+	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
+	cfg.DNS.Protocol = "udp"
 
 	return cfg
 }
@@ -115,15 +118,69 @@ func createTestLogger(t *testing.T) config.Logger {
 	return logger
 }
 
+// 准备测试DNS记录
+func prepareTestDNSRecord(t *testing.T, client etcdclient.Client) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 创建测试DNS记录
+	testRecord := &etcdclient.DNSRecord{
+		Type:  "A",
+		Value: "5.6.7.8",
+		TTL:   300,
+	}
+
+	err := client.PutDNSRecord(ctx, "test.etcd.local", testRecord)
+	require.NoError(t, err, "创建测试DNS记录失败")
+}
+
+// 准备测试服务实例
+func prepareTestService(t *testing.T, client etcdclient.Client) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 创建测试服务实例
+	testService := &etcdclient.ServiceInstance{
+		ServiceName: "test-service",
+		InstanceID:  "instance-001",
+		IPAddress:   "10.0.0.1",
+		Port:        8080,
+		TTL:         60,
+	}
+
+	err := client.RegisterService(ctx, testService)
+	require.NoError(t, err, "注册测试服务实例失败")
+}
+
+// 清理测试数据
+func cleanupTestData(t *testing.T, client etcdclient.Client) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 清理测试服务实例
+	_ = client.DeregisterService(ctx, "test-service", "instance-001")
+
+	// 尝试清理测试DNS记录 (这里没有现成的删除DNS记录的方法，实际项目中可能需要添加)
+}
+
 func TestDNSServer_StartAndShutdown(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
 	// 准备测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
-	cfg.DNS.Protocol = "udp"
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
 
 	// 创建服务器
-	server := NewDNSServer(cfg, &MockLogger{})
+	server := NewDNSServer(cfg, logger)
 
 	// 启动服务器
 	err := server.Start()
@@ -140,17 +197,17 @@ func TestDNSServer_StartAndShutdown(t *testing.T) {
 }
 
 func TestDNSServer_QueryHardcodedRecord(t *testing.T) {
-	// 跳过集成测试如果环境变量设置
-	// TODO: 实现基于环境变量跳过集成测试的逻辑
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
 
 	// 准备测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
-	cfg.DNS.Protocol = "udp"
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
 
 	// 创建并启动服务器
-	server := NewDNSServer(cfg, &MockLogger{})
+	server := NewDNSServer(cfg, logger)
 	err := server.Start()
 	require.NoError(t, err)
 
@@ -189,18 +246,28 @@ func TestDNSServer_QueryHardcodedRecord(t *testing.T) {
 }
 
 func TestDNSServer_QueryEtcdRecord(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
 	// 准备测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
-	cfg.DNS.Protocol = "udp"
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
+
+	// 准备测试数据
+	prepareTestDNSRecord(t, client)
+	defer cleanupTestData(t, client)
 
 	// 创建并启动服务器
-	server := NewDNSServer(cfg, &MockLogger{})
+	server := NewDNSServer(cfg, logger)
 
-	// 设置模拟的etcd客户端
-	mockClient := &MockEtcdClient{}
-	server.SetEtcdClient(mockClient)
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
 
 	err := server.Start()
 	require.NoError(t, err)
@@ -240,22 +307,25 @@ func TestDNSServer_QueryEtcdRecord(t *testing.T) {
 }
 
 func TestDNSServer_ForwardToUpstream(t *testing.T) {
-	// 准备测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
-	cfg.DNS.Protocol = "udp"
-	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 使用Google的DNS服务器作为上游
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
 
-	// 创建日志记录器
-	logger := &MockLogger{}
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 使用Google的DNS服务器作为上游
+	logger := createTestLogger(t)
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
 
 	// 创建并启动服务器
 	server := NewDNSServer(cfg, logger)
 
-	// 设置模拟的etcd客户端
-	mockClient := &MockEtcdClient{}
-	server.SetEtcdClient(mockClient)
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
 
 	err := server.Start()
 	require.NoError(t, err)
@@ -286,22 +356,25 @@ func TestDNSServer_ForwardToUpstream(t *testing.T) {
 }
 
 func TestDNSServer_NoUpstreamDNS(t *testing.T) {
-	// 准备测试配置，不设置上游DNS
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
-	cfg.DNS.Protocol = "udp"
-	cfg.DNS.UpstreamDNS = "" // 不设置上游DNS
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
 
-	// 创建日志记录器
-	logger := &MockLogger{}
+	// 准备测试配置，不设置上游DNS
+	cfg := createTestConfig(t)
+	cfg.DNS.UpstreamDNS = "" // 不设置上游DNS
+	logger := createTestLogger(t)
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
 
 	// 创建并启动服务器
 	server := NewDNSServer(cfg, logger)
 
-	// 设置模拟的etcd客户端
-	mockClient := &MockEtcdClient{}
-	server.SetEtcdClient(mockClient)
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
 
 	err := server.Start()
 	require.NoError(t, err)
