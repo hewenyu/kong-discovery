@@ -66,6 +66,9 @@ type Client interface {
 	// StartWatch 开始监听指定前缀的key变化
 	StartWatch(ctx context.Context, prefix string, callback WatchCallback) error
 
+	// GetAllServiceNames 获取所有已注册服务的名称列表
+	GetAllServiceNames(ctx context.Context) ([]string, error)
+
 	// Client 获取内部的etcd客户端，仅用于测试
 	Client() *clientv3.Client
 }

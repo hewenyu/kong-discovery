@@ -70,9 +70,9 @@
     *   *测试*：集成测试，动态在 etcd 中添加/删除服务，通过 `dig` 查询，验证 DNS 解析结果能实时反映变化。
 
 ### 管理 API 端点 (Echo)
-- [ ] **2.10.** `apihandler` 模块：在**管理 API 端口**上，设计并实现获取服务列表 API 端点 (`GET /admin/services`)。从 `etcdclient` 读取当前所有已注册服务。
+- [x] **2.10.** `apihandler` 模块：在**管理 API 端口**上，设计并实现获取服务列表 API 端点 (`GET /admin/services`)。从 `etcdclient` 读取当前所有已注册服务。
     *   *测试*：集成测试，注册若干服务 -> 调用 API -> 验证返回的服务列表与 etcd 中一致。
-- [ ] **2.11.** `apihandler` 模块：在**管理 API 端口**上，实现获取服务详情 API 端点 (`GET /admin/services/{serviceName}/{instanceId}`)。
+- [x] **2.11.** `apihandler` 模块：在**管理 API 端口**上，实现获取服务详情 API 端点 (`GET /admin/services/{serviceName}/{instanceId}`)。
     *   *测试*：集成测试，调用 API 获取特定服务详情。
 
 ## 第三阶段：React 前端 - 基础搭建与服务展示

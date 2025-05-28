@@ -133,7 +133,11 @@ func (h *EchoHandler) registerManagementRoutes() {
 		})
 	})
 
-	// 管理API的其他端点将在后续任务中添加
+	// 获取服务列表端点
+	h.managementServer.GET("/admin/services", h.getAllServicesHandler)
+
+	// 获取服务详情端点
+	h.managementServer.GET("/admin/services/:serviceName/:instanceId", h.getServiceDetailHandler)
 }
 
 // registerRegistrationRoutes 注册服务注册API路由
@@ -370,6 +374,121 @@ func (h *EchoHandler) heartbeatServiceHandler(c echo.Context) error {
 		ServiceName: serviceName,
 		InstanceID:  instanceID,
 		Message:     "服务租约刷新成功",
+		Timestamp:   time.Now().Format(time.RFC3339),
+	})
+}
+
+// ServiceListResponse 定义服务列表响应结构
+type ServiceListResponse struct {
+	Success   bool     `json:"success"`           // 是否成功
+	Services  []string `json:"services"`          // 服务名称列表
+	Message   string   `json:"message,omitempty"` // 可选消息
+	Count     int      `json:"count"`             // 服务数量
+	Timestamp string   `json:"timestamp"`         // 时间戳
+}
+
+// ServiceDetailResponse 定义服务详情响应结构
+type ServiceDetailResponse struct {
+	Success     bool              `json:"success"`            // 是否成功
+	ServiceName string            `json:"service_name"`       // 服务名称
+	InstanceID  string            `json:"instance_id"`        // 实例ID
+	IPAddress   string            `json:"ip_address"`         // IP地址
+	Port        int               `json:"port"`               // 端口
+	TTL         int               `json:"ttl"`                // TTL（秒）
+	Metadata    map[string]string `json:"metadata,omitempty"` // 可选元数据
+	Message     string            `json:"message,omitempty"`  // 可选消息
+	Timestamp   string            `json:"timestamp"`          // 时间戳
+}
+
+// getAllServicesHandler 处理获取所有服务列表的请求
+func (h *EchoHandler) getAllServicesHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 从etcd获取所有服务名称
+	serviceNames, err := h.etcdClient.GetAllServiceNames(ctx)
+	if err != nil {
+		h.logger.Error("获取服务列表失败", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceListResponse{
+			Success:   false,
+			Message:   "获取服务列表失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回服务列表
+	return c.JSON(http.StatusOK, &ServiceListResponse{
+		Success:   true,
+		Services:  serviceNames,
+		Count:     len(serviceNames),
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// getServiceDetailHandler 处理获取服务实例详情的请求
+func (h *EchoHandler) getServiceDetailHandler(c echo.Context) error {
+	// 获取路径参数
+	serviceName := c.Param("serviceName")
+	instanceID := c.Param("instanceId")
+
+	// 验证参数
+	if serviceName == "" || instanceID == "" {
+		h.logger.Warn("服务详情请求参数无效")
+		return c.JSON(http.StatusBadRequest, &ServiceDetailResponse{
+			Success:   false,
+			Message:   "请求参数无效：服务名和实例ID都是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	ctx := c.Request().Context()
+
+	// 获取服务实例列表
+	instances, err := h.etcdClient.GetServiceInstances(ctx, serviceName)
+	if err != nil {
+		h.logger.Error("获取服务实例列表失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceDetailResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			InstanceID:  instanceID,
+			Message:     "获取服务实例列表失败: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 查找指定的实例
+	var targetInstance *etcdclient.ServiceInstance
+	for _, instance := range instances {
+		if instance.InstanceID == instanceID {
+			targetInstance = instance
+			break
+		}
+	}
+
+	// 如果未找到实例
+	if targetInstance == nil {
+		h.logger.Warn("未找到指定的服务实例",
+			zap.String("service", serviceName),
+			zap.String("id", instanceID))
+		return c.JSON(http.StatusNotFound, &ServiceDetailResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			InstanceID:  instanceID,
+			Message:     "未找到指定的服务实例",
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回实例详情
+	return c.JSON(http.StatusOK, &ServiceDetailResponse{
+		Success:     true,
+		ServiceName: targetInstance.ServiceName,
+		InstanceID:  targetInstance.InstanceID,
+		IPAddress:   targetInstance.IPAddress,
+		Port:        targetInstance.Port,
+		TTL:         targetInstance.TTL,
+		Metadata:    targetInstance.Metadata,
 		Timestamp:   time.Now().Format(time.RFC3339),
 	})
 }

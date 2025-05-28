@@ -262,3 +262,44 @@ func getServiceInstanceKey(serviceName, instanceID string) string {
 func getServicePrefix(serviceName string) string {
 	return fmt.Sprintf("/services/%s/", serviceName)
 }
+
+// GetAllServiceNames 获取所有已注册服务的名称列表
+func (e *EtcdClient) GetAllServiceNames(ctx context.Context) ([]string, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 服务根路径前缀
+	servicesPrefix := "/services/"
+
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	// 获取所有服务键
+	resp, err := e.client.Get(ctx, servicesPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		e.logger.Error("获取服务列表失败", zap.Error(err))
+		return nil, fmt.Errorf("获取服务列表失败: %w", err)
+	}
+
+	// 使用map去重服务名称
+	serviceMap := make(map[string]struct{})
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// 从键中提取服务名
+		// 格式: /services/服务名/实例ID
+		parts := strings.Split(key, "/")
+		if len(parts) >= 3 {
+			serviceName := parts[2]
+			serviceMap[serviceName] = struct{}{}
+		}
+	}
+
+	// 转换为字符串切片
+	serviceNames := make([]string, 0, len(serviceMap))
+	for serviceName := range serviceMap {
+		serviceNames = append(serviceNames, serviceName)
+	}
+
+	return serviceNames, nil
+}

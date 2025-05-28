@@ -564,3 +564,198 @@ func TestServiceHeartbeat_NotFound(t *testing.T) {
 	assert.False(t, response.Success)
 	assert.Contains(t, response.Message, "刷新服务租约失败")
 }
+
+func TestGetAllServices(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建真实的etcd客户端
+	client := createEtcdClient(t)
+	defer client.Close()
+
+	// 创建测试服务名和实例ID，以便测试后清理
+	testServiceName := fmt.Sprintf("test-service-%d", time.Now().UnixNano())
+	testInstanceID := "instance-001"
+
+	// 确保测试结束后清理数据
+	defer cleanupTestData(t, client, testServiceName, testInstanceID)
+
+	// 注册测试服务实例
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	instance := &etcdclient.ServiceInstance{
+		ServiceName: testServiceName,
+		InstanceID:  testInstanceID,
+		IPAddress:   "192.168.1.100",
+		Port:        8080,
+		TTL:         60,
+		Metadata: map[string]string{
+			"version": "1.0.0",
+			"region":  "cn-north",
+		},
+	}
+	err := client.RegisterService(ctx, instance)
+	require.NoError(t, err, "注册服务失败")
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		managementServer: e,
+		cfg:              cfg,
+		logger:           logger,
+		etcdClient:       client,
+	}
+	handler.registerManagementRoutes()
+
+	// 准备请求
+	req := httptest.NewRequest(http.MethodGet, "/admin/services", nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response ServiceListResponse
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Contains(t, response.Services, testServiceName)
+	assert.Greater(t, response.Count, 0)
+}
+
+func TestGetServiceDetail(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建真实的etcd客户端
+	client := createEtcdClient(t)
+	defer client.Close()
+
+	// 创建测试服务名和实例ID，以便测试后清理
+	testServiceName := fmt.Sprintf("test-service-%d", time.Now().UnixNano())
+	testInstanceID := "instance-001"
+
+	// 确保测试结束后清理数据
+	defer cleanupTestData(t, client, testServiceName, testInstanceID)
+
+	// 注册测试服务实例
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	instance := &etcdclient.ServiceInstance{
+		ServiceName: testServiceName,
+		InstanceID:  testInstanceID,
+		IPAddress:   "192.168.1.100",
+		Port:        8080,
+		TTL:         60,
+		Metadata: map[string]string{
+			"version": "1.0.0",
+			"region":  "cn-north",
+		},
+	}
+	err := client.RegisterService(ctx, instance)
+	require.NoError(t, err, "注册服务失败")
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		managementServer: e,
+		cfg:              cfg,
+		logger:           logger,
+		etcdClient:       client,
+	}
+	handler.registerManagementRoutes()
+
+	// 准备请求
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/services/%s/%s", testServiceName, testInstanceID), nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response ServiceDetailResponse
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Equal(t, testServiceName, response.ServiceName)
+	assert.Equal(t, testInstanceID, response.InstanceID)
+	assert.Equal(t, "192.168.1.100", response.IPAddress)
+	assert.Equal(t, 8080, response.Port)
+	assert.Equal(t, 60, response.TTL)
+	assert.Equal(t, "1.0.0", response.Metadata["version"])
+	assert.Equal(t, "cn-north", response.Metadata["region"])
+}
+
+func TestGetServiceDetail_NotFound(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建真实的etcd客户端
+	client := createEtcdClient(t)
+	defer client.Close()
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		managementServer: e,
+		cfg:              cfg,
+		logger:           logger,
+		etcdClient:       client,
+	}
+	handler.registerManagementRoutes()
+
+	// 使用不存在的服务名和实例ID
+	nonExistentServiceName := "non-existent-service"
+	nonExistentInstanceID := "non-existent-instance"
+
+	// 准备请求
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/services/%s/%s", nonExistentServiceName, nonExistentInstanceID), nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应 - 应返回404
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	var response ServiceDetailResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.False(t, response.Success)
+	assert.Equal(t, nonExistentServiceName, response.ServiceName)
+	assert.Equal(t, nonExistentInstanceID, response.InstanceID)
+	assert.Contains(t, response.Message, "未找到指定的服务实例")
+}
