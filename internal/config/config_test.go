@@ -19,7 +19,7 @@ func TestLoadConfig(t *testing.T) {
 	assert.Equal(t, 8080, config.API.Management.Port, "管理API端口应为8080")
 	assert.Equal(t, 8081, config.API.Registration.Port, "注册API端口应为8081")
 	assert.Equal(t, "both", config.DNS.Protocol, "DNS协议应为both")
-	assert.Equal(t, "8.8.8.8:53", config.DNS.UpstreamDNS, "上游DNS应为8.8.8.8:53")
+	assert.Equal(t, []string{"8.8.8.8:53", "8.8.4.4:53"}, config.DNS.UpstreamDNS, "上游DNS应为默认值")
 }
 
 func TestLoadConfigFromEnvVars(t *testing.T) {
