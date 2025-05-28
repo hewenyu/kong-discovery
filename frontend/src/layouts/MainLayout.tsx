@@ -1,17 +1,53 @@
 import { useState } from 'react';
 import { Layout, Menu, theme } from 'antd';
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   ApiOutlined,
   AppstoreOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
 
 const { Header, Content, Sider } = Layout;
+
+// 定义菜单项类型
+type MenuItem = Required<MenuProps>['items'][number];
+
+// 创建菜单项函数
+const getItem = (
+  label: React.ReactNode,
+  key: string,
+  icon?: React.ReactNode,
+  children?: MenuItem[],
+): MenuItem => {
+  return {
+    key,
+    icon,
+    children,
+    label,
+  } as MenuItem;
+};
 
 const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const { token } = theme.useToken();
+  const location = useLocation();
+  
+  // 根据当前路径确定选中的菜单项
+  const getSelectedKey = () => {
+    const path = location.pathname;
+    if (path.startsWith('/services')) return 'services';
+    if (path.startsWith('/dns')) return 'dns';
+    if (path.startsWith('/settings')) return 'settings';
+    return 'services'; // 默认选中服务列表
+  };
+
+  // 定义菜单项数组
+  const menuItems: MenuItem[] = [
+    getItem(<Link to="/services">服务列表</Link>, 'services', <AppstoreOutlined />),
+    getItem(<Link to="/dns">DNS配置</Link>, 'dns', <ApiOutlined />),
+    getItem(<Link to="/settings">系统设置</Link>, 'settings', <SettingOutlined />),
+  ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -35,19 +71,10 @@ const MainLayout = () => {
           <Menu
             mode="inline"
             theme="dark"
-            defaultSelectedKeys={['services']}
+            defaultSelectedKeys={[getSelectedKey()]}
             style={{ height: '100%', borderRight: 0 }}
-          >
-            <Menu.Item key="services" icon={<AppstoreOutlined />}>
-              <Link to="/services">服务列表</Link>
-            </Menu.Item>
-            <Menu.Item key="dns" icon={<ApiOutlined />}>
-              <Link to="/dns">DNS配置</Link>
-            </Menu.Item>
-            <Menu.Item key="settings" icon={<SettingOutlined />}>
-              <Link to="/settings">系统设置</Link>
-            </Menu.Item>
-          </Menu>
+            items={menuItems}
+          />
         </Sider>
         
         <Layout style={{ padding: '0 24px 24px' }}>
