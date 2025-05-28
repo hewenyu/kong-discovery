@@ -20,13 +20,15 @@ func createTestConfig(t *testing.T) *config.Config {
 
 	// 从环境变量中获取etcd地址
 	etcdEndpoints := os.Getenv("KONG_DISCOVERY_ETCD_ENDPOINTS")
-	require.NotEmpty(t, etcdEndpoints, "环境变量KONG_DISCOVERY_ETCD_ENDPOINTS必须设置")
+	if etcdEndpoints == "" {
+		t.Skip("跳过测试：未设置KONG_DISCOVERY_ETCD_ENDPOINTS环境变量")
+	}
 
 	// 创建配置
 	cfg := &config.Config{}
 	cfg.Etcd.Endpoints = []string{etcdEndpoints}
-	cfg.Etcd.Username = "" // 如果需要认证，设置相应的值
-	cfg.Etcd.Password = "" // 如果需要认证，设置相应的值
+	cfg.Etcd.Username = os.Getenv("KONG_DISCOVERY_ETCD_USERNAME") // 如果需要认证，获取用户名
+	cfg.Etcd.Password = os.Getenv("KONG_DISCOVERY_ETCD_PASSWORD") // 如果需要认证，获取密码
 	cfg.DNS.ListenAddress = "127.0.0.1"
 	cfg.DNS.Port = 15353 // 使用非标准端口避免冲突
 	cfg.DNS.Protocol = "udp"
