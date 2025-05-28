@@ -59,8 +59,8 @@ const MainLayout = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <Header className="kong-header">
         <div className="logo">
-          <CloudServerOutlined style={{ fontSize: '24px', marginRight: '10px' }} />
-          <span className="logo-text">Kong Discovery</span>
+          <CloudServerOutlined style={{ fontSize: '24px', color: '#1890ff' }} />
+          <div className="logo-text">Kong Discovery</div>
         </div>
       </Header>
       

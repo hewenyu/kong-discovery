@@ -1,1 +1,108 @@
- 
+/* Kong Manager风格的布局样式 */
+
+/* 头部样式 */
+.kong-header {
+  background-color: #041746;
+  color: white;
+  height: 64px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  z-index: 10;
+}
+
+/* Logo样式 */
+.logo {
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+  font-weight: 600;
+  background-color: #072163; /* 略微更亮的背景，形成对比 */
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #0e2d7a; /* 添加边框 */
+  box-shadow: 0 0 10px rgba(21, 101, 192, 0.3); /* 添加发光效果 */
+}
+
+.logo-text {
+  margin-left: 8px;
+  font-size: 20px;
+  color: white; /* 纯白色 */
+  font-weight: bold; /* 加粗 */
+  letter-spacing: 0.5px; /* 增加字母间距 */
+  text-shadow: 0 0 10px rgba(64, 169, 255, 0.8); /* 蓝色发光效果 */
+}
+
+/* 侧边栏样式 */
+.kong-sider {
+  background-color: #041746 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 侧边栏折叠按钮样式 */
+.ant-layout-sider-trigger {
+  background-color: #0a1c55 !important;
+}
+
+/* 菜单选中项样式 */
+.ant-menu-dark .ant-menu-item-selected {
+  background-color: #1155cb !important;
+}
+
+/* 内容区布局 */
+.kong-content-layout {
+  padding: 20px;
+  background-color: #f5f7fa;
+}
+
+/* 内容区样式 */
+.kong-content {
+  background-color: white;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Card卡片样式 */
+.kong-card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e1e4e8;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+/* 卡片标题 */
+.kong-card-title {
+  font-size: 16px;
+  color: #333;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* 强调色文本 */
+.kong-text-accent {
+  color: #1155cb;
+}
+
+/* 表格样式定制 */
+.kong-table .ant-table-thead > tr > th {
+  background-color: #f5f7fa;
+  color: #333;
+  font-weight: 600;
+}
+
+/* 按钮样式定制 */
+.kong-button-primary {
+  background-color: #1155cb;
+  border-color: #1155cb;
+}
+
+.kong-button-primary:hover {
+  background-color: #2493df;
+  border-color: #2493df;
+} 
