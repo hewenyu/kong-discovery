@@ -1,8 +1,8 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosResponse } from 'axios';
 
-// 默认配置
-const API_BASE_URL = 'http://localhost:8080'; // 根据实际后端地址修改
+// 默认配置 - 使用相对路径，依赖Vite的代理配置
+const API_BASE_URL = ''; // 使用相对路径
 
 // 创建axios实例
 const apiClient: AxiosInstance = axios.create({

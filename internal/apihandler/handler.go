@@ -57,6 +57,13 @@ func (h *EchoHandler) StartManagementAPI() error {
 	h.managementServer.Use(middleware.Recover())
 	h.managementServer.Use(middleware.Logger())
 
+	// 添加CORS中间件
+	h.managementServer.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
+	}))
+
 	// 注册路由
 	h.registerManagementRoutes()
 
@@ -84,6 +91,13 @@ func (h *EchoHandler) StartRegistrationAPI() error {
 	// 添加中间件
 	h.registrationServer.Use(middleware.Recover())
 	h.registrationServer.Use(middleware.Logger())
+
+	// 添加CORS中间件
+	h.registrationServer.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
+	}))
 
 	// 注册路由
 	h.registerRegistrationRoutes()
