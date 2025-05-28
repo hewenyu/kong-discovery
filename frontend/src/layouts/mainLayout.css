@@ -16,6 +16,7 @@
 .logo {
   display: flex;
   align-items: center;
+  justify-content: center; /* 水平居中 */
   font-size: 18px;
   font-weight: 600;
   background-color: #072163; /* 略微更亮的背景，形成对比 */
@@ -23,6 +24,7 @@
   border-radius: 6px;
   border: 1px solid #0e2d7a; /* 添加边框 */
   box-shadow: 0 0 10px rgba(21, 101, 192, 0.3); /* 添加发光效果 */
+  height: 40px; /* 固定高度 */
 }
 
 .logo-text {
@@ -32,6 +34,9 @@
   font-weight: bold; /* 加粗 */
   letter-spacing: 0.5px; /* 增加字母间距 */
   text-shadow: 0 0 10px rgba(64, 169, 255, 0.8); /* 蓝色发光效果 */
+  line-height: 1; /* 设置行高为1，防止文字垂直偏移 */
+  display: flex;
+  align-items: center; /* 垂直居中 */
 }
 
 /* 侧边栏样式 */
@@ -45,9 +50,27 @@
   background-color: #0a1c55 !important;
 }
 
+/* 菜单样式 */
+.ant-menu.ant-menu-dark {
+  background-color: transparent;
+}
+
+.ant-menu.ant-menu-dark .ant-menu-item {
+  margin: 4px 0;
+  border-radius: 4px;
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
 /* 菜单选中项样式 */
 .ant-menu-dark .ant-menu-item-selected {
   background-color: #1155cb !important;
+  font-weight: 500;
+}
+
+/* 菜单鼠标悬停效果 */
+.ant-menu-dark .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background-color: rgba(17, 85, 203, 0.3) !important;
 }
 
 /* 内容区布局 */

@@ -44,7 +44,7 @@ const MainLayout = () => {
     if (path.startsWith('/services')) return 'services';
     if (path.startsWith('/dns')) return 'dns';
     if (path.startsWith('/settings')) return 'settings';
-    return 'services'; // 默认选中服务列表
+    return 'dashboard'; // 默认选中概览
   };
 
   // 定义菜单项数组
@@ -59,7 +59,10 @@ const MainLayout = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <Header className="kong-header">
         <div className="logo">
-          <CloudServerOutlined style={{ fontSize: '24px', color: '#1890ff' }} />
+          <CloudServerOutlined style={{ 
+            fontSize: '24px', 
+            color: '#40a9ff'
+          }} />
           <div className="logo-text">Kong Discovery</div>
         </div>
       </Header>
