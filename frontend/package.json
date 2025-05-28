@@ -1,7 +1,8 @@
 {
-  "name": "frontend",
+  "name": "kong-discovery-ui",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Kong Discovery服务发现系统的前端界面",
   "type": "module",
   "scripts": {
     "dev": "vite",
