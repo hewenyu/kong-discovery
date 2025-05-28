@@ -57,6 +57,10 @@ type DNSServer struct {
 	dnsCache       map[string]map[string]*etcdclient.DNSRecord       // domain -> recordType -> record
 	serviceCache   map[string]map[string]*etcdclient.ServiceInstance // serviceName -> instanceID -> instance
 	watcherStarted bool
+
+	// 上游DNS配置
+	upstreamDNSMutex sync.RWMutex
+	upstreamDNS      string // 当前使用的上游DNS服务器地址
 }
 
 // NewDNSServer 创建一个新的DNS服务器
@@ -67,6 +71,7 @@ func NewDNSServer(cfg *config.Config, logger config.Logger) Server {
 		shutdownErr:  make(chan error, 2), // 用于收集UDP和TCP服务器的关闭错误
 		dnsCache:     make(map[string]map[string]*etcdclient.DNSRecord),
 		serviceCache: make(map[string]map[string]*etcdclient.ServiceInstance),
+		upstreamDNS:  cfg.DNS.UpstreamDNS, // 初始使用配置文件中的上游DNS
 	}
 }
 
@@ -136,6 +141,79 @@ func (s *DNSServer) startEtcdWatcher() {
 		s.logger.Info("服务监听已启动")
 		s.watcherStarted = true
 	}
+
+	// 监听DNS配置变化
+	err = s.etcdClient.StartWatch(ctx, "/config/dns/", func(event etcdclient.WatchEvent) {
+		s.handleDNSConfigChange(event)
+	})
+
+	if err != nil {
+		s.logger.Error("启动DNS配置监听失败", zap.Error(err))
+	} else {
+		s.logger.Info("DNS配置监听已启动")
+	}
+
+	// 尝试从etcd加载DNS配置
+	s.loadDNSConfigFromEtcd(ctx)
+}
+
+// loadDNSConfigFromEtcd 从etcd加载DNS配置
+func (s *DNSServer) loadDNSConfigFromEtcd(ctx context.Context) {
+	if s.etcdClient == nil {
+		return
+	}
+
+	// 获取DNS配置
+	configs, err := s.etcdClient.GetDNSConfig(ctx)
+	if err != nil {
+		s.logger.Error("从etcd加载DNS配置失败", zap.Error(err))
+		return
+	}
+
+	// 更新上游DNS配置
+	if upstreamDNS, ok := configs["upstream_dns"]; ok && upstreamDNS != "" {
+		s.updateUpstreamDNS(upstreamDNS)
+	}
+}
+
+// handleDNSConfigChange 处理DNS配置变化事件
+func (s *DNSServer) handleDNSConfigChange(event etcdclient.WatchEvent) {
+	// 从key中提取配置项名称
+	// 预期key格式: /config/dns/{configName}
+	parts := strings.Split(event.Key, "/")
+	if len(parts) < 4 {
+		s.logger.Warn("无效的DNS配置key格式", zap.String("key", event.Key))
+		return
+	}
+
+	configName := parts[3]
+
+	switch event.EventType {
+	case "create", "update":
+		if configName == "upstream_dns" {
+			s.updateUpstreamDNS(event.Value)
+		}
+
+	case "delete":
+		if configName == "upstream_dns" {
+			// 如果配置被删除，恢复为默认配置
+			s.updateUpstreamDNS(s.cfg.DNS.UpstreamDNS)
+		}
+	}
+}
+
+// updateUpstreamDNS 更新上游DNS配置
+func (s *DNSServer) updateUpstreamDNS(upstreamDNS string) {
+	s.upstreamDNSMutex.Lock()
+	defer s.upstreamDNSMutex.Unlock()
+
+	// 检查是否有变化
+	if s.upstreamDNS == upstreamDNS {
+		return
+	}
+
+	s.upstreamDNS = upstreamDNS
+	s.logger.Info("上游DNS配置已更新", zap.String("upstream_dns", upstreamDNS))
 }
 
 // handleDNSRecordChange 处理DNS记录变化事件
@@ -398,8 +476,18 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 // forwardToUpstream 将DNS查询转发到上游DNS服务器
 func (s *DNSServer) forwardToUpstream(r *dns.Msg, m *dns.Msg) error {
+	// 获取当前上游DNS服务器地址
+	s.upstreamDNSMutex.RLock()
+	upstreamDNS := s.upstreamDNS
+	s.upstreamDNSMutex.RUnlock()
+
+	// 如果上游DNS配置为空，则使用配置文件中的默认值
+	if upstreamDNS == "" {
+		upstreamDNS = s.cfg.DNS.UpstreamDNS
+	}
+
 	s.logger.Info("转发查询到上游DNS服务器",
-		zap.String("upstream", s.cfg.DNS.UpstreamDNS))
+		zap.String("upstream", upstreamDNS))
 
 	// 创建一个新的客户端
 	c := new(dns.Client)
@@ -409,7 +497,7 @@ func (s *DNSServer) forwardToUpstream(r *dns.Msg, m *dns.Msg) error {
 	req.Id = dns.Id() // 生成新的ID
 
 	// 发送到上游DNS服务器
-	resp, _, err := c.Exchange(req, s.cfg.DNS.UpstreamDNS)
+	resp, _, err := c.Exchange(req, upstreamDNS)
 	if err != nil {
 		return err
 	}

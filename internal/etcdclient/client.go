@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/config"
@@ -71,6 +72,12 @@ type Client interface {
 
 	// Client 获取内部的etcd客户端，仅用于测试
 	Client() *clientv3.Client
+
+	// GetDNSConfig 获取DNS配置
+	GetDNSConfig(ctx context.Context) (map[string]string, error)
+
+	// UpdateDNSConfig 更新DNS配置
+	UpdateDNSConfig(ctx context.Context, key string, value string) error
 }
 
 // EtcdClient 实现Client接口
@@ -282,4 +289,63 @@ func (e *EtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) 
 // Client 获取内部的etcd客户端，仅用于测试
 func (e *EtcdClient) Client() *clientv3.Client {
 	return e.client
+}
+
+// DNS配置在etcd中的路径前缀
+const dnsConfigPrefix = "/config/dns/"
+
+// GetDNSConfig 获取DNS配置
+func (e *EtcdClient) GetDNSConfig(ctx context.Context) (map[string]string, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	// 获取所有DNS配置
+	resp, err := e.client.Get(ctx, dnsConfigPrefix, clientv3.WithPrefix())
+	if err != nil {
+		e.logger.Error("获取DNS配置失败", zap.Error(err))
+		return nil, fmt.Errorf("获取DNS配置失败: %w", err)
+	}
+
+	// 解析结果
+	configs := make(map[string]string)
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// 从key中提取配置名称，去掉前缀
+		configName := strings.TrimPrefix(key, dnsConfigPrefix)
+		configs[configName] = string(kv.Value)
+	}
+
+	return configs, nil
+}
+
+// UpdateDNSConfig 更新DNS配置
+func (e *EtcdClient) UpdateDNSConfig(ctx context.Context, key string, value string) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	// 生成完整的key
+	fullKey := dnsConfigPrefix + key
+
+	// 更新配置
+	_, err := e.client.Put(ctx, fullKey, value)
+	if err != nil {
+		e.logger.Error("更新DNS配置失败",
+			zap.String("key", key),
+			zap.String("value", value),
+			zap.Error(err))
+		return fmt.Errorf("更新DNS配置失败: %w", err)
+	}
+
+	e.logger.Info("DNS配置已更新",
+		zap.String("key", key),
+		zap.String("value", value))
+	return nil
 }

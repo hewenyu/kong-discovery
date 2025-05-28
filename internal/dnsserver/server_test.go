@@ -888,3 +888,90 @@ func TestDNSServer_DynamicDNSRecords_Integration(t *testing.T) {
 	assert.Equal(t, dns.RcodeNameError, r3.Rcode, "删除后的DNS响应代码应为NXDOMAIN")
 	assert.Equal(t, 0, len(r3.Answer), "删除后不应该有答案")
 }
+
+func TestDNSServer_DynamicUpstreamDNS(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 默认使用Google的DNS服务器
+	logger := createTestLogger(t)
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
+
+	// 创建并启动服务器
+	server := NewDNSServer(cfg, logger)
+	dnsServer := server.(*DNSServer)
+
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
+
+	err := server.Start()
+	require.NoError(t, err)
+
+	// 等待服务器启动
+	time.Sleep(100 * time.Millisecond)
+
+	// 验证初始上游DNS配置
+	dnsServer.upstreamDNSMutex.RLock()
+	initialUpstreamDNS := dnsServer.upstreamDNS
+	dnsServer.upstreamDNSMutex.RUnlock()
+	assert.Equal(t, "8.8.8.8:53", initialUpstreamDNS)
+
+	// 更新上游DNS配置
+	newUpstreamDNS := "1.1.1.1:53" // 切换到Cloudflare的DNS服务器
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.UpdateDNSConfig(ctx, "upstream_dns", newUpstreamDNS)
+	cancel()
+	require.NoError(t, err)
+
+	// 等待配置更新传播
+	time.Sleep(200 * time.Millisecond)
+
+	// 验证上游DNS配置已更新
+	dnsServer.upstreamDNSMutex.RLock()
+	updatedUpstreamDNS := dnsServer.upstreamDNS
+	dnsServer.upstreamDNSMutex.RUnlock()
+	assert.Equal(t, newUpstreamDNS, updatedUpstreamDNS)
+
+	// 创建DNS客户端
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA) // 查询example.com，应该被转发
+	m.RecursionDesired = true
+
+	// 发送查询
+	r, _, err := c.Exchange(m, "127.0.0.1:15353")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	// 验证响应是成功的
+	assert.Equal(t, dns.RcodeSuccess, r.Rcode, "转发查询应该成功")
+	assert.True(t, len(r.Answer) > 0, "应该返回至少一个回答")
+
+	// 删除上游DNS配置，验证恢复默认值
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	_, err = client.Client().Delete(ctx, "/config/dns/upstream_dns")
+	cancel()
+	require.NoError(t, err)
+
+	// 等待配置更新传播
+	time.Sleep(200 * time.Millisecond)
+
+	// 验证上游DNS配置已恢复默认值
+	dnsServer.upstreamDNSMutex.RLock()
+	revertedUpstreamDNS := dnsServer.upstreamDNS
+	dnsServer.upstreamDNSMutex.RUnlock()
+	assert.Equal(t, cfg.DNS.UpstreamDNS, revertedUpstreamDNS)
+
+	// 关闭服务器
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	err = server.Shutdown(shutdownCtx)
+	assert.NoError(t, err)
+}

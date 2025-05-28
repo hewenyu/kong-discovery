@@ -152,6 +152,10 @@ func (h *EchoHandler) registerManagementRoutes() {
 
 	// 获取服务详情端点
 	h.managementServer.GET("/admin/services/:serviceName/:instanceId", h.getServiceDetailHandler)
+
+	// DNS配置相关端点
+	h.managementServer.GET("/admin/config/upstream-dns", h.getUpstreamDNSHandler)
+	h.managementServer.PUT("/admin/config/upstream-dns", h.updateUpstreamDNSHandler)
 }
 
 // registerRegistrationRoutes 注册服务注册API路由
@@ -504,5 +508,95 @@ func (h *EchoHandler) getServiceDetailHandler(c echo.Context) error {
 		TTL:         targetInstance.TTL,
 		Metadata:    targetInstance.Metadata,
 		Timestamp:   time.Now().Format(time.RFC3339),
+	})
+}
+
+// DNSConfigResponse 定义DNS配置响应结构
+type DNSConfigResponse struct {
+	Success   bool              `json:"success"`           // 是否成功
+	Configs   map[string]string `json:"configs"`           // 配置项
+	Message   string            `json:"message,omitempty"` // 可选消息
+	Timestamp string            `json:"timestamp"`         // 时间戳
+}
+
+// DNSConfigUpdateRequest 定义DNS配置更新请求结构
+type DNSConfigUpdateRequest struct {
+	UpstreamDNS string `json:"upstream_dns" validate:"required"` // 上游DNS服务器地址
+}
+
+// getUpstreamDNSHandler 处理获取上游DNS配置请求
+func (h *EchoHandler) getUpstreamDNSHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 从etcd中获取DNS配置
+	configs, err := h.etcdClient.GetDNSConfig(ctx)
+	if err != nil {
+		h.logger.Error("获取DNS配置失败", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSConfigResponse{
+			Success:   false,
+			Message:   "获取DNS配置失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 如果没有配置，则使用应用程序配置中的默认值
+	if len(configs) == 0 || configs["upstream_dns"] == "" {
+		configs = map[string]string{
+			"upstream_dns": h.cfg.DNS.UpstreamDNS,
+		}
+	}
+
+	// 返回成功响应
+	return c.JSON(http.StatusOK, &DNSConfigResponse{
+		Success:   true,
+		Configs:   configs,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// updateUpstreamDNSHandler 处理更新上游DNS配置请求
+func (h *EchoHandler) updateUpstreamDNSHandler(c echo.Context) error {
+	// 解析请求
+	req := new(DNSConfigUpdateRequest)
+	if err := c.Bind(req); err != nil {
+		h.logger.Error("解析DNS配置更新请求失败", zap.Error(err))
+		return c.JSON(http.StatusBadRequest, &DNSConfigResponse{
+			Success:   false,
+			Message:   "请求格式错误: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证请求
+	if req.UpstreamDNS == "" {
+		h.logger.Warn("DNS配置更新请求参数无效")
+		return c.JSON(http.StatusBadRequest, &DNSConfigResponse{
+			Success:   false,
+			Message:   "请求参数无效：上游DNS服务器地址是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 更新etcd中的配置
+	ctx := c.Request().Context()
+	err := h.etcdClient.UpdateDNSConfig(ctx, "upstream_dns", req.UpstreamDNS)
+	if err != nil {
+		h.logger.Error("更新DNS配置失败", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSConfigResponse{
+			Success:   false,
+			Message:   "更新DNS配置失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回成功响应
+	configs := map[string]string{
+		"upstream_dns": req.UpstreamDNS,
+	}
+	return c.JSON(http.StatusOK, &DNSConfigResponse{
+		Success:   true,
+		Configs:   configs,
+		Message:   "DNS配置更新成功",
+		Timestamp: time.Now().Format(time.RFC3339),
 	})
 }

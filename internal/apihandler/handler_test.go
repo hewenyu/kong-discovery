@@ -759,3 +759,112 @@ func TestGetServiceDetail_NotFound(t *testing.T) {
 	assert.Equal(t, nonExistentInstanceID, response.InstanceID)
 	assert.Contains(t, response.Message, "未找到指定的服务实例")
 }
+
+func TestGetUpstreamDNSConfig(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 设置一个默认值
+	logger := createTestLogger(t)
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		managementServer: e,
+		cfg:              cfg,
+		logger:           logger,
+		etcdClient:       client,
+	}
+	handler.registerManagementRoutes()
+
+	// 准备请求获取配置
+	req := httptest.NewRequest(http.MethodGet, "/admin/config/upstream-dns", nil)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response DNSConfigResponse
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Contains(t, response.Configs, "upstream_dns")
+	assert.Equal(t, "8.8.8.8:53", response.Configs["upstream_dns"])
+}
+
+func TestUpdateUpstreamDNSConfig(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 准备测试配置
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建Echo实例
+	e := echo.New()
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
+
+	// 创建handler并注册路由
+	handler := &EchoHandler{
+		managementServer: e,
+		cfg:              cfg,
+		logger:           logger,
+		etcdClient:       client,
+	}
+	handler.registerManagementRoutes()
+
+	// 清理之前的配置
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := client.Client().Delete(ctx, "/config/dns/upstream_dns")
+	require.NoError(t, err)
+
+	// 准备更新请求
+	newUpstreamDNS := "1.1.1.1:53"
+	reqBody := fmt.Sprintf(`{"upstream_dns": "%s"}`, newUpstreamDNS)
+	req := httptest.NewRequest(http.MethodPut, "/admin/config/upstream-dns", strings.NewReader(reqBody))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	// 执行请求
+	e.ServeHTTP(rec, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response DNSConfigResponse
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Success)
+	assert.Contains(t, response.Configs, "upstream_dns")
+	assert.Equal(t, newUpstreamDNS, response.Configs["upstream_dns"])
+	assert.Equal(t, "DNS配置更新成功", response.Message)
+
+	// 验证etcd中的值
+	getCtx, getCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer getCancel()
+	getResp, err := client.Client().Get(getCtx, "/config/dns/upstream_dns")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(getResp.Kvs))
+	assert.Equal(t, newUpstreamDNS, string(getResp.Kvs[0].Value))
+}
