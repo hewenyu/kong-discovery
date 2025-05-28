@@ -64,9 +64,9 @@
     *   *测试*：集成测试，注册服务 -> 等待一段时间（接近 TTL 但未超时） -> 发送心跳 -> 验证 etcd 中租约已续期。
 
 ### 动态服务发现与 DNS 更新
-- [ ] **2.8.** `etcdclient` 模块：实现 Watcher 逻辑，监听 etcd 中服务路径（e.g., `/services/`) 下的 key 变化。
+- [x] **2.8.** `etcdclient` 模块：实现 Watcher 逻辑，监听 etcd 中服务路径（e.g., `/services/`) 下的 key 变化。
     *   *测试*：单元测试 Watcher 能够正确接收到 etcd 的 create, update, delete 事件。
-- [ ] **2.9.** `dnsserver` 模块：集成 `etcdclient` 的 Watcher。当服务发生变化时，动态更新 DNS 服务器内部的解析数据/缓存（或标记需要重新查询）。
+- [x] **2.9.** `dnsserver` 模块：集成 `etcdclient` 的 Watcher。当服务发生变化时，动态更新 DNS 服务器内部的解析数据/缓存（或标记需要重新查询）。
     *   *测试*：集成测试，动态在 etcd 中添加/删除服务，通过 `dig` 查询，验证 DNS 解析结果能实时反映变化。
 
 ### 管理 API 端点 (Echo)
