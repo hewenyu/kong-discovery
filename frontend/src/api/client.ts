@@ -1,8 +1,8 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosResponse } from 'axios';
 
-// 默认配置 - 使用相对路径，依赖Vite的代理配置
-const API_BASE_URL = ''; // 使用相对路径
+// 默认配置 - 使用API前缀区分API请求与前端路由
+const API_BASE_URL = '/api'; // 使用/api前缀，由Vite代理转发到后端
 
 // 创建axios实例
 const apiClient: AxiosInstance = axios.create({

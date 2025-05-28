@@ -6,6 +6,7 @@ import DnsConfig from './pages/DnsConfig';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 
+// 创建路由器，使用basename选项适应Vite开发服务器的路由
 const router = createBrowserRouter([
   {
     path: '/',
@@ -37,6 +38,8 @@ const router = createBrowserRouter([
     path: '*',
     element: <NotFound />,
   },
-]);
+], {
+  basename: '/' // 确保基础路径正确
+});
 
 export default router; 

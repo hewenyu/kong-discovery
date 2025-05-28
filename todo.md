@@ -77,15 +77,15 @@
 
 ## 第三阶段：React 前端 - 基础搭建与服务展示
 
-- [ ] **3.1.** React 项目初始化：使用 Create React App 或 Vite 初始化前端项目，配置基本目录结构。
+- [x] **3.1.** React 项目初始化：使用 Create React App 或 Vite 初始化前端项目，配置基本目录结构。
     *   *测试*：项目能成功启动，显示默认页面。
-- [ ] **3.2.** API Client 封装：创建 Axios (或 Fetch) 实例，封装基础的 API 调用逻辑 (连接到后端管理 API 端口)。
+- [x] **3.2.** API Client 封装：创建 Axios (或 Fetch) 实例，封装基础的 API 调用逻辑 (连接到后端管理 API 端口)。
     *   *测试*：尝试调用后端的 `/health` 或 `/admin/services` (空列表)，验证连接。
-- [ ] **3.3.** 基础 UI 框架：实现应用的整体布局组件 (如 Header, Sidebar, Content Area) 和基本路由 (e.g., using React Router)。
+- [x] **3.3.** 基础 UI 框架：实现应用的整体布局组件 (如 Header, Sidebar, Content Area) 和基本路由 (e.g., using React Router)。
     *   *测试*：手动检查页面布局和路由跳转是否正常。
-- [ ] **3.4.** 服务列表页面：创建一个组件，调用 `/admin/services` API，获取并以表格形式展示服务列表。
+- [x] **3.4.** 服务列表页面：创建一个组件，调用 `/admin/services` API，获取并以表格形式展示服务列表。
     *   *测试*：后端预注册几个服务，前端页面能正确展示列表数据。
-- [ ] **3.5.** 服务详情页面：创建组件，当用户在服务列表点击某服务时，路由到此页面，调用 `/admin/services/{serviceName}/{instanceId}` API，展示服务详细信息。
+- [x] **3.5.** 服务详情页面：创建组件，当用户在服务列表点击某服务时，路由到此页面，调用 `/admin/services/{serviceName}/{instanceId}` API，展示服务详细信息。
     *   *测试*：验证从列表页跳转到详情页，并正确显示服务数据。
 
 ## 第四阶段：高级功能与完善

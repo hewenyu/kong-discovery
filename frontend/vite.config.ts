@@ -11,7 +11,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
-      '/admin': {
+      '^/admin/services': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
@@ -19,7 +19,11 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '/services': {
+      '^/services/register': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '^/services/heartbeat': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

@@ -15,6 +15,17 @@ kong-discovery/
 ├── doc/                    # 文档
 │   ├── development_plan.md # 开发规划文档
 │   └── project_structure.md # 本文档
+├── frontend/               # React前端项目
+│   ├── public/             # 静态资源
+│   ├── src/                # 源代码
+│   │   ├── api/            # API客户端
+│   │   ├── layouts/        # 布局组件
+│   │   ├── pages/          # 页面组件
+│   │   ├── router.tsx      # 路由配置
+│   │   ├── main.tsx        # 入口文件
+│   │   └── index.css       # 全局样式
+│   ├── package.json        # 项目配置
+│   └── README.md           # 前端项目说明
 ├── internal/               # 内部包
 │   ├── apihandler/         # API处理器模块
 │   │   ├── handler.go      # API处理器接口和实现
@@ -98,26 +109,44 @@ kong-discovery/
    - 实现了缓存更新和删除的逻辑
    - 完成了集成测试
 
+8. **React前端** (任务3.1-3.5)
+   - 使用Vite初始化了React+TypeScript项目
+   - 实现了基于Axios的API客户端封装
+   - 使用React Router和Ant Design实现了应用布局和路由
+   - 实现了服务列表页面，可从后端获取服务数据并展示
+   - 实现了服务详情页面，可展示服务实例的详细信息
+   - 添加了跨域支持，解决本地开发中的CORS问题
+
 ## 下一步开发计划
 
 即将开始开发的模块:
 
-1. **React前端** (任务3.1-3.5)
-   - 初始化React项目
-   - 实现API客户端封装
-   - 开发基础UI框架和路由
-   - 开发服务列表和详情页面
+1. **DNS配置管理** (任务4.1-4.3)
+   - 实现获取和更新上游DNS配置的API
+   - 修改DNS转发逻辑，支持动态读取上游DNS地址
+   - 开发DNS配置管理页面，支持用户修改上游DNS设置
+
+2. **高级功能** (任务4.4-4.5)
+   - 实现自定义DNS记录管理功能
+   - 实现服务统计仪表盘
 
 ## 依赖库
 
 当前项目使用的主要外部依赖:
 
+### Go后端
 - `go.uber.org/zap` - 日志库
 - `github.com/spf13/viper` - 配置管理
 - `go.etcd.io/etcd/client/v3` - etcd客户端
 - `github.com/labstack/echo/v4` - Web框架
 - `github.com/miekg/dns` - DNS服务器库
 - `github.com/stretchr/testify` - 测试辅助库
+
+### React前端
+- React 18 - 前端框架
+- React Router - 路由管理
+- Axios - HTTP客户端
+- Ant Design - UI组件库
 
 ## 设计原则
 
