@@ -768,7 +768,7 @@ func TestGetUpstreamDNSConfig(t *testing.T) {
 
 	// 准备测试配置
 	cfg := createTestConfig(t)
-	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 设置一个默认值
+	cfg.DNS.UpstreamDNS = []string{"8.8.8.8:53"} // 设置一个默认值
 	logger := createTestLogger(t)
 
 	// 创建Echo实例
@@ -803,7 +803,11 @@ func TestGetUpstreamDNSConfig(t *testing.T) {
 
 	assert.True(t, response.Success)
 	assert.Contains(t, response.Configs, "upstream_dns")
-	assert.Equal(t, "8.8.8.8:53", response.Configs["upstream_dns"])
+	// 验证上游DNS配置是一个字符串数组
+	upstreamDNS, ok := response.Configs["upstream_dns"].([]interface{})
+	assert.True(t, ok, "upstream_dns应该是一个数组")
+	assert.Equal(t, 1, len(upstreamDNS))
+	assert.Equal(t, "8.8.8.8:53", upstreamDNS[0])
 }
 
 func TestUpdateUpstreamDNSConfig(t *testing.T) {
@@ -839,8 +843,8 @@ func TestUpdateUpstreamDNSConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	// 准备更新请求
-	newUpstreamDNS := "1.1.1.1:53"
-	reqBody := fmt.Sprintf(`{"upstream_dns": "%s"}`, newUpstreamDNS)
+	newUpstreamDNS := []string{"1.1.1.1:53"}
+	reqBody := fmt.Sprintf(`{"upstream_dns": ["%s"]}`, newUpstreamDNS[0])
 	req := httptest.NewRequest(http.MethodPut, "/admin/config/upstream-dns", strings.NewReader(reqBody))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -857,14 +861,24 @@ func TestUpdateUpstreamDNSConfig(t *testing.T) {
 
 	assert.True(t, response.Success)
 	assert.Contains(t, response.Configs, "upstream_dns")
-	assert.Equal(t, newUpstreamDNS, response.Configs["upstream_dns"])
+	// 验证返回的上游DNS配置是一个数组
+	upstreamDNSResp, ok := response.Configs["upstream_dns"].([]interface{})
+	assert.True(t, ok, "响应中的upstream_dns应该是一个数组")
+	assert.Equal(t, 1, len(upstreamDNSResp))
+	assert.Equal(t, newUpstreamDNS[0], upstreamDNSResp[0])
 	assert.Equal(t, "DNS配置更新成功", response.Message)
 
-	// 验证etcd中的值
+	// 验证etcd中的值 - 注意etcd中存储的是JSON数组格式
 	getCtx, getCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer getCancel()
 	getResp, err := client.Client().Get(getCtx, "/config/dns/upstream_dns")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(getResp.Kvs))
-	assert.Equal(t, newUpstreamDNS, string(getResp.Kvs[0].Value))
+
+	// 验证存储的值是否为JSON数组
+	var storedDNS []string
+	err = json.Unmarshal(getResp.Kvs[0].Value, &storedDNS)
+	require.NoError(t, err, "etcd中存储的值应该是一个有效的JSON数组")
+	assert.Equal(t, 1, len(storedDNS))
+	assert.Equal(t, newUpstreamDNS[0], storedDNS[0])
 }

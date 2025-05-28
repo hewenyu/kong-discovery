@@ -19,10 +19,10 @@ type Config struct {
 
 	// DNS服务配置
 	DNS struct {
-		ListenAddress string `mapstructure:"listen_address"`
-		Port          int    `mapstructure:"port"`
-		Protocol      string `mapstructure:"protocol"` // "udp", "tcp", 或 "both"
-		UpstreamDNS   string `mapstructure:"upstream_dns"`
+		ListenAddress string   `mapstructure:"listen_address"`
+		Port          int      `mapstructure:"port"`
+		Protocol      string   `mapstructure:"protocol"` // "udp", "tcp", 或 "both"
+		UpstreamDNS   []string `mapstructure:"upstream_dns"`
 	} `mapstructure:"dns"`
 
 	// API服务配置
@@ -104,7 +104,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("dns.listen_address", "0.0.0.0")
 	v.SetDefault("dns.port", 53)
 	v.SetDefault("dns.protocol", "both")
-	v.SetDefault("dns.upstream_dns", "8.8.8.8:53")
+	v.SetDefault("dns.upstream_dns", []string{"8.8.8.8:53", "8.8.4.4:53"})
 
 	// API服务默认配置
 	v.SetDefault("api.management.listen_address", "0.0.0.0")

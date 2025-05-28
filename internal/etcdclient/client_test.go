@@ -2,6 +2,7 @@ package etcdclient
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -368,4 +369,90 @@ func TestEtcdClient_RefreshServiceLease(t *testing.T) {
 	// 测试完成后，注销服务实例
 	err = client.DeregisterService(ctx, testService.ServiceName, testService.InstanceID)
 	assert.NoError(t, err, "注销服务实例应该成功")
+}
+
+func TestEtcdClient_UpdateDNSConfig(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 创建配置和日志记录器
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建etcd客户端并连接
+	client := NewEtcdClient(cfg, logger)
+	err := client.Connect()
+	require.NoError(t, err, "连接etcd应该成功")
+
+	// 确保在测试结束时关闭连接
+	defer func() {
+		err := client.Close()
+		assert.NoError(t, err, "关闭etcd连接应该成功")
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 测试1: 更新字符串数组类型的配置 (上游DNS服务器列表)
+	upstreamDNS := []string{"8.8.8.8:53", "1.1.1.1:53"}
+	err = client.UpdateDNSConfig(ctx, "upstream_dns", upstreamDNS)
+	assert.NoError(t, err, "更新上游DNS配置应该成功")
+
+	// 验证配置是否已保存
+	configs, err := client.GetDNSConfig(ctx)
+	assert.NoError(t, err, "获取DNS配置应该成功")
+	assert.Contains(t, configs, "upstream_dns", "配置中应该包含upstream_dns")
+
+	// 验证保存的内容是否正确 (需要解析JSON)
+	var savedUpstreamDNS []string
+	err = json.Unmarshal([]byte(configs["upstream_dns"]), &savedUpstreamDNS)
+	assert.NoError(t, err, "应该能够解析保存的上游DNS配置")
+	assert.ElementsMatch(t, upstreamDNS, savedUpstreamDNS, "保存的上游DNS配置应该与原始配置匹配")
+
+	// 测试2: 更新字符串类型的配置
+	testStringKey := "test_string_config"
+	testStringValue := "test_value"
+	err = client.UpdateDNSConfig(ctx, testStringKey, testStringValue)
+	assert.NoError(t, err, "更新字符串配置应该成功")
+
+	// 验证字符串配置是否已保存
+	configs, err = client.GetDNSConfig(ctx)
+	assert.NoError(t, err, "获取DNS配置应该成功")
+	assert.Contains(t, configs, testStringKey, "配置中应该包含测试的字符串键")
+	assert.Equal(t, testStringValue, configs[testStringKey], "保存的字符串值应该与原始值匹配")
+
+	// 测试3: 更新结构体类型的配置
+	type TestConfig struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		Count   int    `json:"count"`
+	}
+	testConfig := TestConfig{
+		Name:    "test_config",
+		Enabled: true,
+		Count:   42,
+	}
+	err = client.UpdateDNSConfig(ctx, "test_struct_config", testConfig)
+	assert.NoError(t, err, "更新结构体配置应该成功")
+
+	// 验证结构体配置是否已保存
+	configs, err = client.GetDNSConfig(ctx)
+	assert.NoError(t, err, "获取DNS配置应该成功")
+	assert.Contains(t, configs, "test_struct_config", "配置中应该包含测试的结构体键")
+
+	// 解析保存的结构体配置
+	var savedConfig TestConfig
+	err = json.Unmarshal([]byte(configs["test_struct_config"]), &savedConfig)
+	assert.NoError(t, err, "应该能够解析保存的结构体配置")
+	assert.Equal(t, testConfig.Name, savedConfig.Name, "保存的结构体Name字段应该匹配")
+	assert.Equal(t, testConfig.Enabled, savedConfig.Enabled, "保存的结构体Enabled字段应该匹配")
+	assert.Equal(t, testConfig.Count, savedConfig.Count, "保存的结构体Count字段应该匹配")
+
+	// 清理测试数据
+	etcdClientImpl := client.(*EtcdClient)
+	_, _ = etcdClientImpl.Client().Delete(ctx, "/config/dns/upstream_dns")
+	_, _ = etcdClientImpl.Client().Delete(ctx, "/config/dns/"+testStringKey)
+	_, _ = etcdClientImpl.Client().Delete(ctx, "/config/dns/test_struct_config")
 }

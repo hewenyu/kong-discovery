@@ -2,6 +2,7 @@ package apihandler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -513,15 +514,15 @@ func (h *EchoHandler) getServiceDetailHandler(c echo.Context) error {
 
 // DNSConfigResponse 定义DNS配置响应结构
 type DNSConfigResponse struct {
-	Success   bool              `json:"success"`           // 是否成功
-	Configs   map[string]string `json:"configs"`           // 配置项
-	Message   string            `json:"message,omitempty"` // 可选消息
-	Timestamp string            `json:"timestamp"`         // 时间戳
+	Success   bool                   `json:"success"`           // 是否成功
+	Configs   map[string]interface{} `json:"configs"`           // 配置项
+	Message   string                 `json:"message,omitempty"` // 可选消息
+	Timestamp string                 `json:"timestamp"`         // 时间戳
 }
 
 // DNSConfigUpdateRequest 定义DNS配置更新请求结构
 type DNSConfigUpdateRequest struct {
-	UpstreamDNS string `json:"upstream_dns" validate:"required"` // 上游DNS服务器地址
+	UpstreamDNS []string `json:"upstream_dns" validate:"required"` // 上游DNS服务器地址列表
 }
 
 // getUpstreamDNSHandler 处理获取上游DNS配置请求
@@ -539,17 +540,33 @@ func (h *EchoHandler) getUpstreamDNSHandler(c echo.Context) error {
 		})
 	}
 
-	// 如果没有配置，则使用应用程序配置中的默认值
-	if len(configs) == 0 || configs["upstream_dns"] == "" {
-		configs = map[string]string{
-			"upstream_dns": h.cfg.DNS.UpstreamDNS,
+	// 处理配置，解析JSON存储的数组
+	result := make(map[string]interface{})
+	for k, v := range configs {
+		if k == "upstream_dns" {
+			// 尝试解析为JSON数组
+			var upstreamList []string
+			err := json.Unmarshal([]byte(v), &upstreamList)
+			if err == nil {
+				result[k] = upstreamList
+			} else {
+				// 如果不是JSON数组，则作为单个值处理
+				result[k] = []string{v}
+			}
+		} else {
+			result[k] = v
 		}
+	}
+
+	// 如果没有配置，则使用应用程序配置中的默认值
+	if len(result) == 0 || result["upstream_dns"] == nil {
+		result["upstream_dns"] = h.cfg.DNS.UpstreamDNS
 	}
 
 	// 返回成功响应
 	return c.JSON(http.StatusOK, &DNSConfigResponse{
 		Success:   true,
-		Configs:   configs,
+		Configs:   result,
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 }
@@ -568,11 +585,11 @@ func (h *EchoHandler) updateUpstreamDNSHandler(c echo.Context) error {
 	}
 
 	// 验证请求
-	if req.UpstreamDNS == "" {
+	if len(req.UpstreamDNS) == 0 {
 		h.logger.Warn("DNS配置更新请求参数无效")
 		return c.JSON(http.StatusBadRequest, &DNSConfigResponse{
 			Success:   false,
-			Message:   "请求参数无效：上游DNS服务器地址是必需的",
+			Message:   "请求参数无效：至少需要一个上游DNS服务器地址",
 			Timestamp: time.Now().Format(time.RFC3339),
 		})
 	}
@@ -590,7 +607,7 @@ func (h *EchoHandler) updateUpstreamDNSHandler(c echo.Context) error {
 	}
 
 	// 返回成功响应
-	configs := map[string]string{
+	configs := map[string]interface{}{
 		"upstream_dns": req.UpstreamDNS,
 	}
 	return c.JSON(http.StatusOK, &DNSConfigResponse{

@@ -242,7 +242,7 @@ func TestDNSServer_ForwardToUpstream(t *testing.T) {
 
 	// 准备测试配置
 	cfg := createTestConfig(t)
-	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 使用Google的DNS服务器作为上游
+	cfg.DNS.UpstreamDNS = []string{"8.8.8.8:53"} // 使用Google的DNS服务器作为上游
 	logger := createTestLogger(t)
 
 	// 创建真实的etcd客户端
@@ -291,7 +291,7 @@ func TestDNSServer_NoUpstreamDNS(t *testing.T) {
 
 	// 准备测试配置，不设置上游DNS
 	cfg := createTestConfig(t)
-	cfg.DNS.UpstreamDNS = "" // 不设置上游DNS
+	cfg.DNS.UpstreamDNS = []string{} // 不设置上游DNS
 	logger := createTestLogger(t)
 
 	// 创建真实的etcd客户端
@@ -897,7 +897,7 @@ func TestDNSServer_DynamicUpstreamDNS(t *testing.T) {
 
 	// 准备测试配置
 	cfg := createTestConfig(t)
-	cfg.DNS.UpstreamDNS = "8.8.8.8:53" // 默认使用Google的DNS服务器
+	cfg.DNS.UpstreamDNS = []string{"8.8.8.8:53"} // 默认使用Google的DNS服务器
 	logger := createTestLogger(t)
 
 	// 创建真实的etcd客户端
@@ -929,10 +929,10 @@ func TestDNSServer_DynamicUpstreamDNS(t *testing.T) {
 	dnsServer.upstreamDNSMutex.RLock()
 	initialUpstreamDNS := dnsServer.upstreamDNS
 	dnsServer.upstreamDNSMutex.RUnlock()
-	assert.Equal(t, "8.8.8.8:53", initialUpstreamDNS)
+	assert.Equal(t, []string{"8.8.8.8:53"}, initialUpstreamDNS)
 
 	// 更新上游DNS配置
-	newUpstreamDNS := "1.1.1.1:53" // 切换到Cloudflare的DNS服务器
+	newUpstreamDNS := []string{"1.1.1.1:53"} // 切换到Cloudflare的DNS服务器
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	err = client.UpdateDNSConfig(ctx, "upstream_dns", newUpstreamDNS)
 	cancel()

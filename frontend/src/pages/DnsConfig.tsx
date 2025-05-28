@@ -1,20 +1,18 @@
 import { useState, useEffect } from 'react';
-import { SettingOutlined, GlobalOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Typography, Form, Input, Button, Card, message, Spin, Space, Divider } from 'antd';
+import { SettingOutlined, GlobalOutlined, SaveOutlined, ReloadOutlined, PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Spin, Space } from 'antd';
 import { dnsApi } from '../api/client';
 import type { DNSConfigResponse } from '../api/client';
 
-const { Title, Text, Paragraph } = Typography;
-
 interface DNSConfig {
-  upstream_dns: string;
+  upstream_dns: string[];
 }
 
 const DnsConfig = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [config, setConfig] = useState<DNSConfig>({ upstream_dns: '' });
+  const [config, setConfig] = useState<DNSConfig>({ upstream_dns: [''] });
   const [messageApi, contextHolder] = message.useMessage();
 
   // 获取DNS配置
@@ -24,14 +22,16 @@ const DnsConfig = () => {
       const response = await dnsApi.getDNSConfig();
       if (response.success && response.configs) {
         const dnsConfig: DNSConfig = {
-          upstream_dns: response.configs.upstream_dns || '',
+          upstream_dns: response.configs.upstream_dns || ['8.8.8.8:53']
         };
         setConfig(dnsConfig);
         form.setFieldsValue(dnsConfig);
+      } else {
+        messageApi.error(response.message || '获取DNS配置失败');
       }
     } catch (error) {
-      console.error('获取DNS配置失败:', error);
-      messageApi.error('获取DNS配置失败，请稍后重试');
+      console.error('获取DNS配置出错:', error);
+      messageApi.error('获取DNS配置失败');
     } finally {
       setLoading(false);
     }
@@ -41,98 +41,139 @@ const DnsConfig = () => {
   const updateDNSConfig = async (values: DNSConfig) => {
     setSaving(true);
     try {
-      const response = await dnsApi.updateUpstreamDNS(values.upstream_dns);
+      // 过滤掉空的上游DNS
+      const validUpstreamDNS = values.upstream_dns.filter(dns => dns.trim() !== '');
+      
+      if (validUpstreamDNS.length === 0) {
+        messageApi.error('至少需要一个上游DNS服务器');
+        setSaving(false);
+        return;
+      }
+      
+      const response = await dnsApi.updateUpstreamDNS(validUpstreamDNS);
       if (response.success) {
         messageApi.success('DNS配置更新成功');
-        setConfig(values);
+        // 更新本地状态
+        setConfig({
+          upstream_dns: response.configs.upstream_dns
+        });
       } else {
-        messageApi.error(response.message || '更新DNS配置失败');
+        messageApi.error(response.message || 'DNS配置更新失败');
       }
     } catch (error) {
-      console.error('更新DNS配置失败:', error);
-      messageApi.error('更新DNS配置失败，请稍后重试');
+      console.error('更新DNS配置出错:', error);
+      messageApi.error('DNS配置更新失败');
     } finally {
       setSaving(false);
     }
   };
 
-  useEffect(() => {
-    fetchDNSConfig();
-  }, []);
+  // 添加一个上游DNS输入框
+  const addUpstreamDNS = () => {
+    const upstreamDNS = form.getFieldValue('upstream_dns') || [];
+    form.setFieldsValue({
+      upstream_dns: [...upstreamDNS, '']
+    });
+  };
 
+  // 移除上游DNS输入框
+  const removeUpstreamDNS = (index: number) => {
+    const upstreamDNS = form.getFieldValue('upstream_dns') || [];
+    if (upstreamDNS.length <= 1) {
+      messageApi.warning('至少需要保留一个上游DNS服务器');
+      return;
+    }
+    form.setFieldsValue({
+      upstream_dns: upstreamDNS.filter((_: any, i: number) => i !== index)
+    });
+  };
+
+  // 提交表单
   const handleSubmit = (values: DNSConfig) => {
     updateDNSConfig(values);
   };
 
+  // 组件加载时获取配置
+  useEffect(() => {
+    fetchDNSConfig();
+  }, []);
+
   return (
     <div>
       {contextHolder}
-      <div className="kong-card">
-        <div style={{ marginBottom: 16 }}>
-          <Title level={3} style={{ margin: 0 }}>DNS配置</Title>
-          <Text type="secondary">管理DNS服务器配置和上游DNS服务器</Text>
-        </div>
-        
-        {loading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
-            <Spin size="large" />
-          </div>
-        ) : (
-          <Card 
-            title={
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                <GlobalOutlined style={{ marginRight: 8 }} />
-                <span>上游DNS服务器配置</span>
-              </div>
-            }
-            bordered={false}
-            className="kong-inner-card"
+      <Card title={<><SettingOutlined /> DNS配置管理</>} extra={
+        <Button 
+          type="primary" 
+          icon={<ReloadOutlined />} 
+          onClick={fetchDNSConfig} 
+          loading={loading}
+        >
+          刷新
+        </Button>
+      }>
+        <Spin spinning={loading}>
+          <Form
+            form={form}
+            layout="vertical"
+            onFinish={handleSubmit}
+            initialValues={config}
           >
-            <Paragraph>
-              上游DNS服务器用于解析未知域名。当Kong Discovery无法从内部记录中解析域名时，查询会被转发到此服务器。
-            </Paragraph>
-            
-            <Form
-              form={form}
-              layout="vertical"
-              onFinish={handleSubmit}
-              initialValues={config}
+            <Form.Item
+              label="上游DNS服务器"
+              required
+              extra="当本地无法解析域名时，查询请求将转发到这些上游DNS服务器。可以添加多个服务器进行负载均衡。"
             >
-              <Form.Item
-                name="upstream_dns"
-                label="上游DNS服务器地址"
-                rules={[
-                  { required: true, message: '请输入上游DNS服务器地址' },
-                  { pattern: /^.+:\d+$/, message: '格式应为: IP地址或域名:端口，例如: 8.8.8.8:53' }
-                ]}
+              <Form.List name="upstream_dns">
+                {(fields) => (
+                  <>
+                    {fields.map((field, index) => (
+                      <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                        <Form.Item
+                          {...field}
+                          rules={[{ required: true, message: '请输入上游DNS服务器地址' }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input 
+                            prefix={<GlobalOutlined />} 
+                            placeholder="例如: 8.8.8.8:53" 
+                            style={{ width: 300 }}
+                          />
+                        </Form.Item>
+                        {fields.length > 1 ? (
+                          <MinusCircleOutlined
+                            className="dynamic-delete-button"
+                            onClick={() => removeUpstreamDNS(index)}
+                          />
+                        ) : null}
+                      </Space>
+                    ))}
+                    <Form.Item>
+                      <Button
+                        type="dashed"
+                        onClick={addUpstreamDNS}
+                        icon={<PlusOutlined />}
+                      >
+                        添加上游DNS服务器
+                      </Button>
+                    </Form.Item>
+                  </>
+                )}
+              </Form.List>
+            </Form.Item>
+
+            <Form.Item>
+              <Button 
+                type="primary" 
+                htmlType="submit" 
+                icon={<SaveOutlined />} 
+                loading={saving}
               >
-                <Input placeholder="输入格式: IP地址或域名:端口，例如: 8.8.8.8:53" />
-              </Form.Item>
-              
-              <Form.Item>
-                <Space>
-                  <Button 
-                    type="primary" 
-                    htmlType="submit" 
-                    icon={<SaveOutlined />} 
-                    loading={saving}
-                    className="kong-button-primary"
-                  >
-                    保存配置
-                  </Button>
-                  <Button 
-                    icon={<ReloadOutlined />} 
-                    onClick={fetchDNSConfig}
-                    disabled={loading}
-                  >
-                    刷新
-                  </Button>
-                </Space>
-              </Form.Item>
-            </Form>
-          </Card>
-        )}
-      </div>
+                保存配置
+              </Button>
+            </Form.Item>
+          </Form>
+        </Spin>
+      </Card>
     </div>
   );
 };

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -59,19 +60,21 @@ type DNSServer struct {
 	watcherStarted bool
 
 	// 上游DNS配置
-	upstreamDNSMutex sync.RWMutex
-	upstreamDNS      string // 当前使用的上游DNS服务器地址
+	upstreamDNSMutex     sync.RWMutex
+	upstreamDNS          []string // 当前使用的上游DNS服务器地址列表
+	currentUpstreamIndex int      // 当前使用的上游DNS索引（用于轮询）
 }
 
 // NewDNSServer 创建一个新的DNS服务器
 func NewDNSServer(cfg *config.Config, logger config.Logger) Server {
 	return &DNSServer{
-		cfg:          cfg,
-		logger:       logger,
-		shutdownErr:  make(chan error, 2), // 用于收集UDP和TCP服务器的关闭错误
-		dnsCache:     make(map[string]map[string]*etcdclient.DNSRecord),
-		serviceCache: make(map[string]map[string]*etcdclient.ServiceInstance),
-		upstreamDNS:  cfg.DNS.UpstreamDNS, // 初始使用配置文件中的上游DNS
+		cfg:                  cfg,
+		logger:               logger,
+		shutdownErr:          make(chan error, 2), // 用于收集UDP和TCP服务器的关闭错误
+		dnsCache:             make(map[string]map[string]*etcdclient.DNSRecord),
+		serviceCache:         make(map[string]map[string]*etcdclient.ServiceInstance),
+		upstreamDNS:          cfg.DNS.UpstreamDNS, // 初始使用配置文件中的上游DNS
+		currentUpstreamIndex: 0,
 	}
 }
 
@@ -171,8 +174,16 @@ func (s *DNSServer) loadDNSConfigFromEtcd(ctx context.Context) {
 	}
 
 	// 更新上游DNS配置
-	if upstreamDNS, ok := configs["upstream_dns"]; ok && upstreamDNS != "" {
-		s.updateUpstreamDNS(upstreamDNS)
+	if upstreamDNSStr, ok := configs["upstream_dns"]; ok && upstreamDNSStr != "" {
+		// 尝试解析为JSON数组
+		var upstreamList []string
+		err := json.Unmarshal([]byte(upstreamDNSStr), &upstreamList)
+		if err != nil {
+			// 如果不是JSON数组，则作为单个值处理
+			upstreamList = []string{upstreamDNSStr}
+		}
+
+		s.updateUpstreamDNS(upstreamList)
 	}
 }
 
@@ -191,7 +202,14 @@ func (s *DNSServer) handleDNSConfigChange(event etcdclient.WatchEvent) {
 	switch event.EventType {
 	case "create", "update":
 		if configName == "upstream_dns" {
-			s.updateUpstreamDNS(event.Value)
+			// 尝试解析为上游DNS服务器列表
+			var upstreamList []string
+			err := json.Unmarshal([]byte(event.Value), &upstreamList)
+			if err != nil {
+				// 如果不是JSON数组，则作为单个值处理
+				upstreamList = []string{event.Value}
+			}
+			s.updateUpstreamDNS(upstreamList)
 		}
 
 	case "delete":
@@ -203,17 +221,49 @@ func (s *DNSServer) handleDNSConfigChange(event etcdclient.WatchEvent) {
 }
 
 // updateUpstreamDNS 更新上游DNS配置
-func (s *DNSServer) updateUpstreamDNS(upstreamDNS string) {
+func (s *DNSServer) updateUpstreamDNS(upstreamDNS []string) {
 	s.upstreamDNSMutex.Lock()
 	defer s.upstreamDNSMutex.Unlock()
 
 	// 检查是否有变化
-	if s.upstreamDNS == upstreamDNS {
-		return
+	if len(s.upstreamDNS) == len(upstreamDNS) {
+		same := true
+		for i, v := range s.upstreamDNS {
+			if v != upstreamDNS[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return
+		}
 	}
 
 	s.upstreamDNS = upstreamDNS
-	s.logger.Info("上游DNS配置已更新", zap.String("upstream_dns", upstreamDNS))
+	s.currentUpstreamIndex = 0 // 重置索引
+	s.logger.Info("上游DNS配置已更新", zap.Strings("upstream_dns", upstreamDNS))
+}
+
+// getNextUpstreamDNS 获取下一个上游DNS服务器（轮询方式）
+func (s *DNSServer) getNextUpstreamDNS() string {
+	s.upstreamDNSMutex.Lock()
+	defer s.upstreamDNSMutex.Unlock()
+
+	if len(s.upstreamDNS) == 0 {
+		// 如果没有配置上游DNS，返回默认值的第一个
+		if len(s.cfg.DNS.UpstreamDNS) > 0 {
+			return s.cfg.DNS.UpstreamDNS[0]
+		}
+		return "" // 没有可用的上游DNS
+	}
+
+	// 轮询选择上游DNS
+	upstream := s.upstreamDNS[s.currentUpstreamIndex]
+
+	// 更新索引
+	s.currentUpstreamIndex = (s.currentUpstreamIndex + 1) % len(s.upstreamDNS)
+
+	return upstream
 }
 
 // handleDNSRecordChange 处理DNS记录变化事件
@@ -456,7 +506,7 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// 如果没有处理所有查询，并且配置了上游DNS，尝试转发
-	if !allQueriesHandled && s.cfg.DNS.UpstreamDNS != "" {
+	if !allQueriesHandled && len(s.upstreamDNS) > 0 {
 		err := s.forwardToUpstream(r, m)
 		if err != nil {
 			s.logger.Error("向上游DNS转发查询失败", zap.Error(err))
@@ -476,14 +526,12 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 // forwardToUpstream 将DNS查询转发到上游DNS服务器
 func (s *DNSServer) forwardToUpstream(r *dns.Msg, m *dns.Msg) error {
-	// 获取当前上游DNS服务器地址
-	s.upstreamDNSMutex.RLock()
-	upstreamDNS := s.upstreamDNS
-	s.upstreamDNSMutex.RUnlock()
+	// 获取下一个上游DNS服务器
+	upstreamDNS := s.getNextUpstreamDNS()
 
-	// 如果上游DNS配置为空，则使用配置文件中的默认值
+	// 如果没有可用的上游DNS
 	if upstreamDNS == "" {
-		upstreamDNS = s.cfg.DNS.UpstreamDNS
+		return fmt.Errorf("没有可用的上游DNS服务器")
 	}
 
 	s.logger.Info("转发查询到上游DNS服务器",
@@ -499,7 +547,33 @@ func (s *DNSServer) forwardToUpstream(r *dns.Msg, m *dns.Msg) error {
 	// 发送到上游DNS服务器
 	resp, _, err := c.Exchange(req, upstreamDNS)
 	if err != nil {
-		return err
+		// 如果当前上游DNS失败，尝试其他上游DNS
+		s.upstreamDNSMutex.RLock()
+		remainingUpstreams := make([]string, 0, len(s.upstreamDNS)-1)
+		for _, u := range s.upstreamDNS {
+			if u != upstreamDNS {
+				remainingUpstreams = append(remainingUpstreams, u)
+			}
+		}
+		s.upstreamDNSMutex.RUnlock()
+
+		if len(remainingUpstreams) > 0 {
+			// 随机选择一个其他上游DNS重试
+			rand.Seed(time.Now().UnixNano())
+			retryUpstream := remainingUpstreams[rand.Intn(len(remainingUpstreams))]
+
+			s.logger.Info("上游DNS失败，尝试备用服务器",
+				zap.String("failed", upstreamDNS),
+				zap.String("retry", retryUpstream),
+				zap.Error(err))
+
+			resp, _, err = c.Exchange(req, retryUpstream)
+			if err != nil {
+				return fmt.Errorf("所有上游DNS服务器都失败: %w", err)
+			}
+		} else {
+			return err
+		}
 	}
 
 	// 检查响应

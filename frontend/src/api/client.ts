@@ -8,7 +8,7 @@ const API_BASE_URL = '/api'; // 使用/api前缀，由Vite代理转发到后端
 export interface DNSConfigResponse {
   success: boolean;
   configs: {
-    upstream_dns: string;
+    upstream_dns: string[];
   };
   message?: string;
   timestamp: string;
@@ -71,7 +71,7 @@ export const dnsApi = {
   getDNSConfig: () => apiClient.get<any, DNSConfigResponse>('/admin/config/upstream-dns'),
   
   // 更新上游DNS配置
-  updateUpstreamDNS: (upstreamDNS: string) => 
+  updateUpstreamDNS: (upstreamDNS: string[]) => 
     apiClient.put<any, DNSConfigResponse>('/admin/config/upstream-dns', { upstream_dns: upstreamDNS }),
 };
 

@@ -77,7 +77,7 @@ type Client interface {
 	GetDNSConfig(ctx context.Context) (map[string]string, error)
 
 	// UpdateDNSConfig 更新DNS配置
-	UpdateDNSConfig(ctx context.Context, key string, value string) error
+	UpdateDNSConfig(ctx context.Context, key string, value interface{}) error
 }
 
 // EtcdClient 实现Client接口
@@ -323,7 +323,7 @@ func (e *EtcdClient) GetDNSConfig(ctx context.Context) (map[string]string, error
 }
 
 // UpdateDNSConfig 更新DNS配置
-func (e *EtcdClient) UpdateDNSConfig(ctx context.Context, key string, value string) error {
+func (e *EtcdClient) UpdateDNSConfig(ctx context.Context, key string, value interface{}) error {
 	if e.client == nil {
 		return fmt.Errorf("etcd客户端未连接")
 	}
@@ -334,18 +334,45 @@ func (e *EtcdClient) UpdateDNSConfig(ctx context.Context, key string, value stri
 	// 生成完整的key
 	fullKey := dnsConfigPrefix + key
 
+	// 如果值是字符串数组，序列化为JSON
+	var valueStr string
+	switch v := value.(type) {
+	case []string:
+		jsonData, err := json.Marshal(v)
+		if err != nil {
+			e.logger.Error("序列化DNS配置失败",
+				zap.String("key", key),
+				zap.Any("value", value),
+				zap.Error(err))
+			return fmt.Errorf("序列化DNS配置失败: %w", err)
+		}
+		valueStr = string(jsonData)
+	case string:
+		valueStr = v
+	default:
+		jsonData, err := json.Marshal(v)
+		if err != nil {
+			e.logger.Error("序列化DNS配置失败",
+				zap.String("key", key),
+				zap.Any("value", value),
+				zap.Error(err))
+			return fmt.Errorf("序列化DNS配置失败: %w", err)
+		}
+		valueStr = string(jsonData)
+	}
+
 	// 更新配置
-	_, err := e.client.Put(ctx, fullKey, value)
+	_, err := e.client.Put(ctx, fullKey, valueStr)
 	if err != nil {
 		e.logger.Error("更新DNS配置失败",
 			zap.String("key", key),
-			zap.String("value", value),
+			zap.Any("value", value),
 			zap.Error(err))
 		return fmt.Errorf("更新DNS配置失败: %w", err)
 	}
 
 	e.logger.Info("DNS配置已更新",
 		zap.String("key", key),
-		zap.String("value", value))
+		zap.Any("value", value))
 	return nil
 }
