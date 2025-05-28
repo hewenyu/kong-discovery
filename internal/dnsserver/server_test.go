@@ -11,9 +11,7 @@ import (
 	"github.com/hewenyu/kong-discovery/internal/etcdclient"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // 创建一个测试用的配置，使用环境变量中的etcd地址
@@ -332,124 +330,25 @@ func TestDNSServer_NoUpstreamDNS(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// 创建一个mock的etcd客户端，用于测试
-type MockEtcdClient struct {
-	mock.Mock
-}
-
-func (m *MockEtcdClient) Connect() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) Ping(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) Get(ctx context.Context, key string) (string, error) {
-	args := m.Called(ctx, key)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockEtcdClient) GetWithPrefix(ctx context.Context, prefix string) (map[string]string, error) {
-	args := m.Called(ctx, prefix)
-	return args.Get(0).(map[string]string), args.Error(1)
-}
-
-func (m *MockEtcdClient) GetDNSRecord(ctx context.Context, domain string, recordType string) (*etcdclient.DNSRecord, error) {
-	args := m.Called(ctx, domain, recordType)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*etcdclient.DNSRecord), args.Error(1)
-}
-
-func (m *MockEtcdClient) PutDNSRecord(ctx context.Context, domain string, record *etcdclient.DNSRecord) error {
-	args := m.Called(ctx, domain, record)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
-	args := m.Called(ctx, domain)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]*etcdclient.DNSRecord), args.Error(1)
-}
-
-func (m *MockEtcdClient) RegisterService(ctx context.Context, instance *etcdclient.ServiceInstance) error {
-	args := m.Called(ctx, instance)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) DeregisterService(ctx context.Context, serviceName, instanceID string) error {
-	args := m.Called(ctx, serviceName, instanceID)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) GetServiceInstances(ctx context.Context, serviceName string) ([]*etcdclient.ServiceInstance, error) {
-	args := m.Called(ctx, serviceName)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*etcdclient.ServiceInstance), args.Error(1)
-}
-
-func (m *MockEtcdClient) ServiceToDNSRecords(ctx context.Context, domain string) (map[string]*etcdclient.DNSRecord, error) {
-	args := m.Called(ctx, domain)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]*etcdclient.DNSRecord), args.Error(1)
-}
-
-func (m *MockEtcdClient) RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error {
-	args := m.Called(ctx, serviceName, instanceID, ttl)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) StartWatch(ctx context.Context, prefix string, callback etcdclient.WatchCallback) error {
-	args := m.Called(ctx, prefix, callback)
-	return args.Error(0)
-}
-
-func (m *MockEtcdClient) Client() *clientv3.Client {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*clientv3.Client)
-}
-
 func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
-	// 创建一个测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 0 // 使用随机端口
-	cfg.DNS.Protocol = "udp"
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
 
-	// 创建日志器
-	logger, err := config.NewLogger(true)
-	require.NoError(t, err, "创建日志器失败")
+	// 创建一个测试配置
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
 
 	// 创建DNS服务器
 	server := NewDNSServer(cfg, logger)
 
-	// 创建一个mock的etcd客户端
-	mockEtcdClient := new(MockEtcdClient)
-
-	// 设置mock行为：StartWatch总是成功
-	mockEtcdClient.On("StartWatch", mock.Anything, "/dns/records/", mock.AnythingOfType("etcdclient.WatchCallback")).Return(nil)
-	mockEtcdClient.On("StartWatch", mock.Anything, "/services/", mock.AnythingOfType("etcdclient.WatchCallback")).Return(nil)
-
-	// 注入mock客户端
-	server.SetEtcdClient(mockEtcdClient)
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
 
 	// 测试缓存更新
 	// 1. 创建测试服务实例
@@ -461,10 +360,19 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 		TTL:         60,
 	}
 
-	// 2. 更新缓存
+	// 2. 注册测试服务实例
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := client.RegisterService(ctx, testService)
+	cancel()
+	require.NoError(t, err, "注册测试服务实例失败")
+
+	// 等待服务注册事件被处理
+	time.Sleep(100 * time.Millisecond)
+
+	// 3. 更新缓存
 	server.UpdateServiceCache(testService)
 
-	// 3. 验证缓存是否被正确更新
+	// 4. 验证缓存是否被正确更新
 	dnsServer := server.(*DNSServer)
 
 	dnsServer.cacheMutex.RLock()
@@ -475,7 +383,7 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 	assert.Equal(t, 1, len(instances), "test-service应该有1个实例")
 	assert.Equal(t, testService, instances["test-instance-1"], "缓存的服务实例应该与原始实例相同")
 
-	// 4. 测试DNS查询
+	// 5. 测试DNS查询
 	// 创建一个DNS查询消息
 	request := new(dns.Msg)
 	request.SetQuestion("test-service.default.svc.cluster.local.", dns.TypeA)
@@ -501,7 +409,16 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 	assert.True(t, ok, "记录应该是A类型")
 	assert.Equal(t, "192.168.1.1", aRecordA.A.String(), "IP地址应该匹配")
 
-	// 5. 测试服务删除
+	// 6. 测试服务删除
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.DeregisterService(ctx2, "test-service", "test-instance-1")
+	cancel2()
+	require.NoError(t, err, "注销测试服务实例失败")
+
+	// 等待服务注销事件被处理
+	time.Sleep(100 * time.Millisecond)
+
+	// 手动从缓存中删除服务
 	server.RemoveServiceFromCache("test-service", "test-instance-1")
 
 	dnsServer.cacheMutex.RLock()
@@ -510,13 +427,23 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 
 	assert.False(t, ok, "服务缓存应该不再包含test-service")
 
-	// 6. 测试DNS记录缓存
+	// 7. 测试DNS记录缓存
 	testDNSRecord := &etcdclient.DNSRecord{
 		Type:  "A",
 		Value: "192.168.1.100",
 		TTL:   300,
 	}
 
+	// 将DNS记录保存到etcd
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.PutDNSRecord(ctx3, "example.com", testDNSRecord)
+	cancel3()
+	require.NoError(t, err, "保存DNS记录失败")
+
+	// 等待DNS记录事件被处理
+	time.Sleep(100 * time.Millisecond)
+
+	// 更新缓存
 	server.UpdateCache("example.com", "A", testDNSRecord)
 
 	// 验证缓存
@@ -548,7 +475,18 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 	assert.Equal(t, "example.com.", aRecord.Header().Name, "域名应该匹配")
 	assert.Equal(t, dns.TypeA, aRecord.Header().Rrtype, "记录类型应该是A")
 
-	// 7. 测试DNS记录删除
+	// 8. 测试DNS记录删除
+	// 直接从etcd中删除记录
+	ctx4, cancel4 := context.WithTimeout(context.Background(), 5*time.Second)
+	etcdClientImpl := client.(*etcdclient.EtcdClient)
+	_, err = etcdClientImpl.Client().Delete(ctx4, "/dns/records/example.com/A")
+	cancel4()
+	require.NoError(t, err, "删除DNS记录失败")
+
+	// 等待DNS记录删除事件被处理
+	time.Sleep(100 * time.Millisecond)
+
+	// 手动从缓存中删除记录
 	server.RemoveFromCache("example.com", "A")
 
 	dnsServer.cacheMutex.RLock()
@@ -556,66 +494,51 @@ func TestDNSServerDynamicServiceDiscovery(t *testing.T) {
 	dnsServer.cacheMutex.RUnlock()
 
 	assert.False(t, ok, "DNS缓存应该不再包含example.com")
-
-	// 验证模拟调用
-	mockEtcdClient.AssertExpectations(t)
 }
 
 func TestDNSServerWatchEvents(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
 	// 创建一个测试配置
-	cfg := &config.Config{}
-	cfg.DNS.ListenAddress = "127.0.0.1"
-	cfg.DNS.Port = 0 // 使用随机端口
-	cfg.DNS.Protocol = "udp"
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
 
-	// 创建日志器
-	logger, err := config.NewLogger(true)
-	require.NoError(t, err, "创建日志器失败")
+	// 创建真实的etcd客户端
+	client := etcdclient.CreateEtcdClientForTest(t)
+	defer client.Close()
 
-	// 创建DNS服务器
+	// 创建并启动DNS服务器
 	server := NewDNSServer(cfg, logger)
 	dnsServer := server.(*DNSServer)
 
-	// 创建一个mock的etcd客户端
-	mockEtcdClient := new(MockEtcdClient)
+	// 设置etcd客户端
+	server.SetEtcdClient(client)
 
-	// 捕获StartWatch调用时的回调函数
-	var dnsRecordCallback etcdclient.WatchCallback
-	var serviceCallback etcdclient.WatchCallback
-
-	mockEtcdClient.On("StartWatch", mock.Anything, "/dns/records/", mock.AnythingOfType("etcdclient.WatchCallback")).
-		Run(func(args mock.Arguments) {
-			dnsRecordCallback = args.Get(2).(etcdclient.WatchCallback)
-		}).
-		Return(nil)
-
-	mockEtcdClient.On("StartWatch", mock.Anything, "/services/", mock.AnythingOfType("etcdclient.WatchCallback")).
-		Run(func(args mock.Arguments) {
-			serviceCallback = args.Get(2).(etcdclient.WatchCallback)
-		}).
-		Return(nil)
-
-	// 注入mock客户端并启动监听
-	server.SetEtcdClient(mockEtcdClient)
+	// 启动etcd监听
 	dnsServer.startEtcdWatcher()
 
-	// 确保回调函数被捕获
-	require.NotNil(t, dnsRecordCallback, "DNS记录回调函数应该被捕获")
-	require.NotNil(t, serviceCallback, "服务回调函数应该被捕获")
+	// 确保watcher已启动
+	require.True(t, dnsServer.watcherStarted, "watcher应该已启动")
 
 	// 1. 测试DNS记录创建事件
-	dnsRecordEvent := etcdclient.WatchEvent{
-		EventType: "create",
-		Key:       "/dns/records/example.com/A",
-		Value:     `{"type":"A","value":"192.168.1.100","ttl":300}`,
+	testDNSRecord := &etcdclient.DNSRecord{
+		Type:  "A",
+		Value: "192.168.1.100",
+		TTL:   300,
 	}
 
-	// 触发回调
-	dnsRecordCallback(dnsRecordEvent)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	err := client.PutDNSRecord(ctx1, "example.com", testDNSRecord)
+	cancel1()
+	require.NoError(t, err, "保存DNS记录失败")
+
+	// 等待DNS记录事件被处理
+	time.Sleep(500 * time.Millisecond)
 
 	// 验证缓存是否更新
-	time.Sleep(100 * time.Millisecond) // 等待异步处理完成
-
 	dnsServer.cacheMutex.RLock()
 	records, ok := dnsServer.dnsCache["example.com"]
 	dnsServer.cacheMutex.RUnlock()
@@ -634,27 +557,15 @@ func TestDNSServerWatchEvents(t *testing.T) {
 		TTL:         60,
 	}
 
-	serviceJson := `{
-		"service_name": "test-service",
-		"instance_id": "test-instance-1",
-		"ip_address": "192.168.1.1",
-		"port": 8080,
-		"ttl": 60
-	}`
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.RegisterService(ctx2, serviceInstance)
+	cancel2()
+	require.NoError(t, err, "注册服务失败")
 
-	serviceEvent := etcdclient.WatchEvent{
-		EventType:  "create",
-		Key:        "/services/test-service/test-instance-1",
-		Value:      serviceJson,
-		ServiceObj: serviceInstance,
-	}
-
-	// 触发回调
-	serviceCallback(serviceEvent)
+	// 等待服务事件被处理
+	time.Sleep(500 * time.Millisecond)
 
 	// 验证缓存是否更新
-	time.Sleep(100 * time.Millisecond) // 等待异步处理完成
-
 	dnsServer.cacheMutex.RLock()
 	instances, ok := dnsServer.serviceCache["test-service"]
 	dnsServer.cacheMutex.RUnlock()
@@ -665,25 +576,37 @@ func TestDNSServerWatchEvents(t *testing.T) {
 	assert.Equal(t, "192.168.1.1", instances["test-instance-1"].IPAddress, "IP地址应该匹配")
 
 	// 3. 测试删除事件
-	deleteEvent := etcdclient.WatchEvent{
-		EventType: "delete",
-		Key:       "/services/test-service/test-instance-1",
-	}
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
+	err = client.DeregisterService(ctx3, "test-service", "test-instance-1")
+	cancel3()
+	require.NoError(t, err, "注销服务失败")
 
-	// 触发回调
-	serviceCallback(deleteEvent)
+	// 等待删除事件被处理
+	time.Sleep(500 * time.Millisecond)
 
 	// 验证缓存是否更新
-	time.Sleep(100 * time.Millisecond) // 等待异步处理完成
-
 	dnsServer.cacheMutex.RLock()
 	_, ok = dnsServer.serviceCache["test-service"]
 	dnsServer.cacheMutex.RUnlock()
 
 	assert.False(t, ok, "服务缓存应该不再包含test-service")
 
-	// 验证模拟调用
-	mockEtcdClient.AssertExpectations(t)
+	// 4. 测试DNS记录删除
+	ctx4, cancel4 := context.WithTimeout(context.Background(), 5*time.Second)
+	etcdClientImpl := client.(*etcdclient.EtcdClient)
+	_, err = etcdClientImpl.Client().Delete(ctx4, "/dns/records/example.com/A")
+	cancel4()
+	require.NoError(t, err, "删除DNS记录失败")
+
+	// 等待DNS记录删除事件被处理
+	time.Sleep(500 * time.Millisecond)
+
+	// 验证缓存是否更新
+	dnsServer.cacheMutex.RLock()
+	_, ok = dnsServer.dnsCache["example.com"]
+	dnsServer.cacheMutex.RUnlock()
+
+	assert.False(t, ok, "DNS缓存应该不再包含example.com")
 }
 
 func TestDNSServer_DynamicServiceDiscovery_Integration(t *testing.T) {
