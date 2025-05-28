@@ -904,6 +904,14 @@ func TestDNSServer_DynamicUpstreamDNS(t *testing.T) {
 	client := etcdclient.CreateEtcdClientForTest(t)
 	defer client.Close()
 
+	// 清理已有的DNS配置，避免干扰测试
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err := client.Client().Delete(cleanCtx, "/config/dns/upstream_dns")
+	cleanCancel()
+	if err != nil {
+		t.Logf("清理DNS配置时出错: %v", err)
+	}
+
 	// 创建并启动服务器
 	server := NewDNSServer(cfg, logger)
 	dnsServer := server.(*DNSServer)
@@ -911,7 +919,7 @@ func TestDNSServer_DynamicUpstreamDNS(t *testing.T) {
 	// 设置etcd客户端
 	server.SetEtcdClient(client)
 
-	err := server.Start()
+	err = server.Start()
 	require.NoError(t, err)
 
 	// 等待服务器启动
