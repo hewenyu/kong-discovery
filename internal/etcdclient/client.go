@@ -62,6 +62,12 @@ type Client interface {
 
 	// RefreshServiceLease 刷新服务实例的租约
 	RefreshServiceLease(ctx context.Context, serviceName, instanceID string, ttl int) error
+
+	// StartWatch 开始监听指定前缀的key变化
+	StartWatch(ctx context.Context, prefix string, callback WatchCallback) error
+
+	// Client 获取内部的etcd客户端，仅用于测试
+	Client() *clientv3.Client
 }
 
 // EtcdClient 实现Client接口
@@ -268,4 +274,9 @@ func (e *EtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) 
 	}
 
 	return records, nil
+}
+
+// Client 获取内部的etcd客户端，仅用于测试
+func (e *EtcdClient) Client() *clientv3.Client {
+	return e.client
 }
