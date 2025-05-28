@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Typography, Tag, Space, Button } from 'antd';
+import { Table, Card, Typography, Tag, Space, Button, Input } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { serviceApi } from '../api/client';
+import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 interface Service {
   serviceName: string;
@@ -19,6 +20,7 @@ interface Service {
 const ServiceList = () => {
   const [loading, setLoading] = useState(true);
   const [services, setServices] = useState<Service[]>([]);
+  const [searchValue, setSearchValue] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -37,11 +39,20 @@ const ServiceList = () => {
     }
   };
 
+  // 过滤服务列表
+  const filteredServices = searchValue
+    ? services.filter(service => 
+        service.serviceName.toLowerCase().includes(searchValue.toLowerCase()) ||
+        service.instanceId.toLowerCase().includes(searchValue.toLowerCase()) ||
+        service.ip.includes(searchValue))
+    : services;
+
   const columns = [
     {
       title: '服务名称',
       dataIndex: 'serviceName',
       key: 'serviceName',
+      render: (text: string) => <Text strong className="kong-text-accent">{text}</Text>,
     },
     {
       title: '实例ID',
@@ -64,7 +75,7 @@ const ServiceList = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status: string) => (
-        <Tag color={status === 'active' ? 'green' : 'red'}>
+        <Tag color={status === 'active' ? 'success' : 'error'}>
           {status === 'active' ? '活跃' : '离线'}
         </Tag>
       ),
@@ -92,25 +103,41 @@ const ServiceList = () => {
   ];
 
   return (
-    <Card>
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <div>
+      <div className="kong-card">
         <Title level={3}>服务列表</Title>
+        <Text type="secondary">管理已注册的服务及其实例</Text>
         
-        <Space style={{ marginBottom: 16 }}>
-          <Button type="primary" onClick={fetchServices}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 20, marginBottom: 20 }}>
+          <Input 
+            placeholder="搜索服务名称或IP" 
+            style={{ width: 300 }} 
+            value={searchValue}
+            onChange={e => setSearchValue(e.target.value)}
+            prefix={<SearchOutlined style={{ color: 'rgba(0,0,0,.25)' }} />}
+            allowClear
+          />
+          
+          <Button 
+            type="primary" 
+            icon={<ReloadOutlined />} 
+            onClick={fetchServices}
+            className="kong-button-primary"
+          >
             刷新
           </Button>
-        </Space>
+        </div>
         
         <Table 
+          className="kong-table"
           rowKey={(record) => `${record.serviceName}-${record.instanceId}`}
           columns={columns} 
-          dataSource={services} 
+          dataSource={filteredServices} 
           loading={loading}
           pagination={{ pageSize: 10 }}
         />
-      </Space>
-    </Card>
+      </div>
+    </div>
   );
 };
 

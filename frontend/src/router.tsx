@@ -5,6 +5,7 @@ import ServiceDetail from './pages/ServiceDetail';
 import DnsConfig from './pages/DnsConfig';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
+import Dashboard from './pages/Dashboard';
 
 // 创建路由器，使用basename选项适应Vite开发服务器的路由
 const router = createBrowserRouter([
@@ -14,7 +15,7 @@ const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <ServiceList />,
+        element: <Dashboard />,
       },
       {
         path: 'services',

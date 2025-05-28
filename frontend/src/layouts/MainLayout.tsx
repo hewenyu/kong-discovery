@@ -1,14 +1,19 @@
 import { useState } from 'react';
-import { Layout, Menu, theme } from 'antd';
+import { Layout, Menu, theme, Typography } from 'antd';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   ApiOutlined,
   AppstoreOutlined,
   SettingOutlined,
+  DashboardOutlined,
+  GlobalOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
+import './mainLayout.css';
 
 const { Header, Content, Sider } = Layout;
+const { Title } = Typography;
 
 // 定义菜单项类型
 type MenuItem = Required<MenuProps>['items'][number];
@@ -44,49 +49,45 @@ const MainLayout = () => {
 
   // 定义菜单项数组
   const menuItems: MenuItem[] = [
+    getItem(<Link to="/">概览</Link>, 'dashboard', <DashboardOutlined />),
     getItem(<Link to="/services">服务列表</Link>, 'services', <AppstoreOutlined />),
-    getItem(<Link to="/dns">DNS配置</Link>, 'dns', <ApiOutlined />),
+    getItem(<Link to="/dns">DNS配置</Link>, 'dns', <GlobalOutlined />),
     getItem(<Link to="/settings">系统设置</Link>, 'settings', <SettingOutlined />),
   ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        background: token.colorPrimary, 
-        color: 'white',
-        padding: '0 16px'
-      }}>
-        <h1 style={{ margin: 0 }}>Kong Discovery</h1>
+      <Header className="kong-header">
+        <div className="logo">
+          <CloudServerOutlined style={{ fontSize: '24px', marginRight: '10px' }} />
+          <span className="logo-text">Kong Discovery</span>
+        </div>
       </Header>
       
       <Layout>
         <Sider 
+          className="kong-sider"
           collapsible 
           collapsed={collapsed} 
           onCollapse={(value) => setCollapsed(value)}
-          width={200}
+          width={220}
+          theme="dark"
         >
           <Menu
             mode="inline"
             theme="dark"
             defaultSelectedKeys={[getSelectedKey()]}
-            style={{ height: '100%', borderRight: 0 }}
+            style={{ 
+              height: '100%', 
+              borderRight: 0,
+              backgroundColor: 'transparent' 
+            }}
             items={menuItems}
           />
         </Sider>
         
-        <Layout style={{ padding: '0 24px 24px' }}>
-          <Content
-            style={{
-              padding: 24,
-              margin: '16px 0',
-              background: token.colorBgContainer,
-              borderRadius: token.borderRadiusLG,
-              minHeight: 280,
-            }}
-          >
+        <Layout className="kong-content-layout">
+          <Content className="kong-content">
             <Outlet />
           </Content>
         </Layout>
