@@ -16,27 +16,27 @@
 .logo {
   display: flex;
   align-items: center;
-  justify-content: center; /* 水平居中 */
   font-size: 18px;
   font-weight: 600;
-  background-color: #072163; /* 略微更亮的背景，形成对比 */
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid #0e2d7a; /* 添加边框 */
-  box-shadow: 0 0 10px rgba(21, 101, 192, 0.3); /* 添加发光效果 */
-  height: 40px; /* 固定高度 */
+  /* 移除背景、边框和阴影，使其更简洁，与Kong Manager一致 */
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  height: auto;
 }
 
 .logo-text {
   margin-left: 8px;
-  font-size: 20px;
-  color: white; /* 纯白色 */
-  font-weight: bold; /* 加粗 */
-  letter-spacing: 0.5px; /* 增加字母间距 */
-  text-shadow: 0 0 10px rgba(64, 169, 255, 0.8); /* 蓝色发光效果 */
-  line-height: 1; /* 设置行高为1，防止文字垂直偏移 */
+  font-size: 16px;
+  color: #4ECCA3; /* 采用绿青色，与Kong Manager相似 */
+  font-weight: 600; /* 稍微减轻字重 */
+  letter-spacing: 0.2px;
+  text-shadow: none; /* 移除文字阴影 */
+  line-height: 1;
   display: flex;
-  align-items: center; /* 垂直居中 */
+  align-items: center;
 }
 
 /* 侧边栏样式 */
@@ -128,4 +128,4 @@
 .kong-button-primary:hover {
   background-color: #2493df;
   border-color: #2493df;
-} 
+}

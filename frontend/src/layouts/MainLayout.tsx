@@ -59,10 +59,11 @@ const MainLayout = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <Header className="kong-header">
         <div className="logo">
-          <CloudServerOutlined style={{ 
-            fontSize: '24px', 
-            color: '#40a9ff'
-          }} />
+          <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16.8333 5.5L8.5 10.3333V20L16.8333 24.8333L25.1667 20V10.3333L16.8333 5.5Z" fill="#4ECCA3" />
+            <path d="M7.16667 13.8333L4.5 15.3333V20.8333L7.16667 22.3333L9.83333 20.8333V15.3333L7.16667 13.8333Z" fill="#4ECCA3" />
+            <path d="M26.5 13.8333L23.8333 15.3333V20.8333L26.5 22.3333L29.1667 20.8333V15.3333L26.5 13.8333Z" fill="#4ECCA3" />
+          </svg>
           <div className="logo-text">Kong Discovery</div>
         </div>
       </Header>
