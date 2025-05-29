@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	Port                = 8889
 	KongDiscoveryServer = "http://localhost:8081"
 	DNSDiscoveryServer  = "127.0.0.1:6553"
 	ServiceName         = "example-service"
@@ -138,7 +139,7 @@ func createDNSRecordExample(ctx context.Context) error {
 
 	// 创建SRV记录
 	srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", ServiceName)
-	srvValue := fmt.Sprintf("10 10 8080 %s", ServiceDomain)
+	srvValue := fmt.Sprintf("10 10 %d %s", Port, ServiceDomain)
 	srvRecord := &sdk.DNSRecord{
 		Domain: srvDomain,
 		Type:   "SRV",
