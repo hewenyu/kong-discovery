@@ -3,23 +3,33 @@ package etcd
 import (
 	"testing"
 
-	"github.com/hewenyu/kong-discovery/pkg/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClient_GetServiceKey(t *testing.T) {
-	client := &Client{
-		prefix: "/kong-discovery/services/",
+	if !hasEtcdEnvironment() {
+		t.Skip("没有可用的etcd环境，跳过测试")
 	}
+
+	cfg := getEtcdConfigFromEnv()
+	client, err := NewClient(cfg)
+	require.NoError(t, err, "创建etcd客户端失败")
+	defer client.Close()
 
 	key := client.GetServiceKey("test-service")
 	assert.Equal(t, "/kong-discovery/services/test-service", key)
 }
 
 func TestClient_GetServicesPrefix(t *testing.T) {
-	client := &Client{
-		prefix: "/kong-discovery/services/",
+	if !hasEtcdEnvironment() {
+		t.Skip("没有可用的etcd环境，跳过测试")
 	}
+
+	cfg := getEtcdConfigFromEnv()
+	client, err := NewClient(cfg)
+	require.NoError(t, err, "创建etcd客户端失败")
+	defer client.Close()
 
 	prefix := client.GetServicesPrefix()
 	assert.Equal(t, "/kong-discovery/services/", prefix)
@@ -27,25 +37,17 @@ func TestClient_GetServicesPrefix(t *testing.T) {
 
 func TestNewClient_ConfigValidation(t *testing.T) {
 	// 正确配置
-	validConfig := &config.EtcdConfig{
-		Endpoints:   []string{"localhost:2379"},
-		DialTimeout: "5s",
-	}
+	validConfig := getEtcdConfigFromEnv()
 
 	// 超时格式错误配置
-	invalidTimeoutConfig := &config.EtcdConfig{
-		Endpoints:   []string{"localhost:2379"},
-		DialTimeout: "invalid",
-	}
+	invalidTimeoutConfig := getEtcdConfigFromEnv()
+	invalidTimeoutConfig.DialTimeout = "invalid"
 
 	// 无法解析的超时应当返回错误
 	_, err := NewClient(invalidTimeoutConfig)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "解析etcd超时时间失败")
 
-	// 这个测试只是验证代码逻辑，实际上会因为没有真实的etcd服务而失败
-	// 如果在实际环境中有可用的etcd服务，这个测试会通过
-	// 此处我们只是确认参数传递正确
 	_, err = NewClient(validConfig)
 	t.Logf("尝试连接etcd: %v", err)
 }
