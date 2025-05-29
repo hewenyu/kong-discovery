@@ -148,7 +148,8 @@ const DnsConfig = () => {
                     {fields.map((field, index) => (
                       <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
                         <Form.Item
-                          {...field}
+                          key={field.key}
+                          name={field.name}
                           rules={[{ required: true, message: '请输入上游DNS服务器地址' }]}
                           style={{ marginBottom: 0 }}
                         >
