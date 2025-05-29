@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -86,15 +85,8 @@ func main() {
 	net.DefaultResolver = customResolver
 	fmt.Println("已设置自定义DNS解析器，确保域名查询使用Kong Discovery DNS服务器")
 
-	// 先创建DNS记录，确保服务可以被解析
-	err := createDNSRecordExample(ctx)
-	if err != nil {
-		fmt.Printf("创建DNS记录示例警告: %v\n", err)
-		fmt.Println("继续执行其他功能...")
-	}
-
 	// 演示服务注册
-	err = registerServiceExample(ctx)
+	err := registerServiceExample(ctx)
 	if err != nil {
 		log.Fatalf("服务注册示例失败: %v", err)
 	}
@@ -110,61 +102,6 @@ func main() {
 	fmt.Println("示例运行中，按下Ctrl+C退出...")
 	<-ctx.Done()
 	fmt.Println("示例程序已退出")
-}
-
-// 创建DNS记录示例
-func createDNSRecordExample(ctx context.Context) error {
-	fmt.Println("=== 创建DNS记录示例 ===")
-
-	// 创建Kong Discovery客户端
-	client := sdk.NewClient(KongDiscoveryServer)
-
-	ip := getIPAddress()
-	fmt.Printf("本机IP地址: %s\n", ip)
-
-	// 手动创建DNS A记录
-	dnsRecord := &sdk.DNSRecord{
-		Domain: ServiceDomain,
-		Type:   "A",
-		Value:  ip,
-		TTL:    60,
-	}
-
-	fmt.Printf("正在创建DNS记录: %s %s %s\n", dnsRecord.Domain, dnsRecord.Type, dnsRecord.Value)
-	response, err := client.CreateDNSRecord(ctx, dnsRecord)
-	if err != nil {
-		fmt.Printf("创建DNS记录失败: %v\n", err)
-		return err
-	}
-
-	fmt.Printf("DNS记录创建成功: %+v\n", response)
-
-	// 创建SRV记录 - 修改记录值格式，确保目标域名以点号结尾
-	srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", ServiceName)
-	// 确保目标域名以点号结尾，符合DNS格式规范
-	targetDomain := ServiceDomain
-	if !strings.HasSuffix(targetDomain, ".") {
-		targetDomain = targetDomain + "."
-	}
-	srvValue := fmt.Sprintf("10 10 %d %s", Port, targetDomain)
-
-	srvRecord := &sdk.DNSRecord{
-		Domain: srvDomain,
-		Type:   "SRV",
-		Value:  srvValue,
-		TTL:    60,
-	}
-
-	fmt.Printf("正在创建SRV记录: %s %s %s\n", srvRecord.Domain, srvRecord.Type, srvRecord.Value)
-	srvResponse, err := client.CreateDNSRecord(ctx, srvRecord)
-	if err != nil {
-		fmt.Printf("创建SRV记录失败: %v\n", err)
-		// 继续执行，不返回错误
-	} else {
-		fmt.Printf("SRV记录创建成功: %+v\n", srvResponse)
-	}
-
-	return nil
 }
 
 // 服务注册示例
