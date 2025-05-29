@@ -147,7 +147,8 @@ func (d *DNSDiscovery) ResolveSRV(ctx context.Context, serviceName string) (*net
 	// 构建要查询的域名
 	queryName := serviceName
 	if !strings.Contains(serviceName, ".") {
-		queryName = fmt.Sprintf("_%s._tcp.service.discovery", serviceName)
+		// 使用与服务器兼容的SRV记录格式: _service._tcp.default.svc.cluster.local
+		queryName = fmt.Sprintf("_%s._tcp.default.svc.cluster.local", serviceName)
 	}
 
 	fmt.Printf("执行SRV查询: %s\n", queryName)
@@ -192,11 +193,18 @@ func (d *DNSDiscovery) ResolveSRV(ctx context.Context, serviceName string) (*net
 	}
 
 	if r == nil || r.Rcode != dns.RcodeSuccess {
+		if r != nil {
+			fmt.Printf("SRV查询响应码: %s\n", dns.RcodeToString[r.Rcode])
+		}
 		return nil, fmt.Errorf("未找到服务[%s]的SRV记录", queryName)
 	}
 
+	// 调试: 输出原始响应
+	fmt.Printf("收到SRV查询响应: %+v\n", r)
+
 	// 解析响应中的SRV记录
 	for _, a := range r.Answer {
+		fmt.Printf("SRV记录: %s\n", a.String())
 		if srvRecord, ok := a.(*dns.SRV); ok {
 			srvRecords = append(srvRecords, &net.SRV{
 				Target:   srvRecord.Target,
@@ -212,6 +220,10 @@ func (d *DNSDiscovery) ResolveSRV(ctx context.Context, serviceName string) (*net
 	}
 
 	fmt.Printf("SRV解析结果: %s -> 找到%d条记录\n", queryName, len(srvRecords))
+	for i, srv := range srvRecords {
+		fmt.Printf("  [%d] 优先级:%d 权重:%d 端口:%d 目标:%s\n",
+			i, srv.Priority, srv.Weight, srv.Port, srv.Target)
+	}
 
 	// 更新缓存
 	d.updateSRVCache(serviceName, srvRecords)

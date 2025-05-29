@@ -7,10 +7,12 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/sdk"
+	"github.com/miekg/dns"
 )
 
 const (
@@ -137,9 +139,15 @@ func createDNSRecordExample(ctx context.Context) error {
 
 	fmt.Printf("DNS记录创建成功: %+v\n", response)
 
-	// 创建SRV记录
+	// 创建SRV记录 - 修改记录值格式，确保目标域名以点号结尾
 	srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", ServiceName)
-	srvValue := fmt.Sprintf("10 10 %d %s", Port, ServiceDomain)
+	// 确保目标域名以点号结尾，符合DNS格式规范
+	targetDomain := ServiceDomain
+	if !strings.HasSuffix(targetDomain, ".") {
+		targetDomain = targetDomain + "."
+	}
+	srvValue := fmt.Sprintf("10 10 %d %s", Port, targetDomain)
+
 	srvRecord := &sdk.DNSRecord{
 		Domain: srvDomain,
 		Type:   "SRV",
@@ -154,6 +162,25 @@ func createDNSRecordExample(ctx context.Context) error {
 		// 继续执行，不返回错误
 	} else {
 		fmt.Printf("SRV记录创建成功: %+v\n", srvResponse)
+	}
+
+	// 额外创建一个测试SRV记录，直接按DNS格式要求
+	testSrvDomain := fmt.Sprintf("_test-srv._tcp.default.svc.cluster.local")
+	testSrvValue := fmt.Sprintf("10 10 %d %s.default.svc.cluster.local.", Port, ServiceName)
+
+	testSrvRecord := &sdk.DNSRecord{
+		Domain: testSrvDomain,
+		Type:   "SRV",
+		Value:  testSrvValue,
+		TTL:    60,
+	}
+
+	fmt.Printf("正在创建测试SRV记录: %s %s %s\n", testSrvRecord.Domain, testSrvRecord.Type, testSrvRecord.Value)
+	testSrvResponse, err := client.CreateDNSRecord(ctx, testSrvRecord)
+	if err != nil {
+		fmt.Printf("创建测试SRV记录失败: %v\n", err)
+	} else {
+		fmt.Printf("测试SRV记录创建成功: %+v\n", testSrvResponse)
 	}
 
 	return nil
@@ -269,14 +296,15 @@ func discoverServiceExample(ctx context.Context) error {
 					fmt.Printf("解析到服务域名: %s -> %s\n", ServiceDomain, host)
 				}
 
-				// 解析SRV记录
+				// 查询原始SRV记录
+				fmt.Println("\n1. 查询原始SRV记录:")
 				srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", ServiceName)
-				srv, err := discovery.ResolveSRV(ctx, srvDomain)
-				if err != nil {
-					fmt.Printf("解析SRV记录失败: %v\n", err)
-				} else {
-					fmt.Printf("解析到SRV记录: %s -> %+v\n", srvDomain, srv)
-				}
+				querySRVRecord(DNSDiscoveryServer, srvDomain)
+
+				// 查询测试SRV记录
+				fmt.Println("\n2. 查询测试SRV记录:")
+				testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
+				querySRVRecord(DNSDiscoveryServer, testSrvDomain)
 
 				// 直接使用net包进行解析测试
 				ips, err := net.LookupIP(ServiceDomain)
@@ -290,6 +318,62 @@ func discoverServiceExample(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// 查询SRV记录并显示详细信息
+func querySRVRecord(dnsServer, domain string) {
+	// 直接创建DNS查询消息
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn(domain), dns.TypeSRV)
+	m.RecursionDesired = true
+
+	// 打印实际发送的DNS查询
+	fmt.Printf("发送DNS查询: %s IN SRV\n", dns.Fqdn(domain))
+
+	// 执行DNS查询
+	c := new(dns.Client)
+	c.Timeout = 5 * time.Second
+	r, _, err := c.Exchange(m, dnsServer)
+
+	if err != nil {
+		fmt.Printf("SRV查询失败: %v\n", err)
+		return
+	}
+
+	fmt.Printf("DNS响应状态: %s (Code: %d)\n", dns.RcodeToString[r.Rcode], r.Rcode)
+
+	if r.Rcode == dns.RcodeSuccess && len(r.Answer) > 0 {
+		fmt.Printf("找到 %d 条SRV记录:\n", len(r.Answer))
+		for i, ans := range r.Answer {
+			if srv, ok := ans.(*dns.SRV); ok {
+				fmt.Printf("  #%d: %s\n", i+1, srv.String())
+				fmt.Printf("     优先级=%d 权重=%d 端口=%d 目标=%s\n",
+					srv.Priority, srv.Weight, srv.Port, srv.Target)
+			} else {
+				fmt.Printf("  #%d: 非SRV记录: %s\n", i+1, ans.String())
+			}
+		}
+
+		// 显示附加记录
+		if len(r.Extra) > 0 {
+			fmt.Printf("附加记录 (%d):\n", len(r.Extra))
+			for i, extra := range r.Extra {
+				fmt.Printf("  额外 #%d: %s\n", i+1, extra.String())
+			}
+		}
+	} else if r.Rcode == dns.RcodeSuccess {
+		fmt.Printf("查询成功但没有找到记录\n")
+	} else {
+		fmt.Printf("查询未返回成功结果\n")
+
+		// 显示权威记录
+		if len(r.Ns) > 0 {
+			fmt.Printf("权威记录 (%d):\n", len(r.Ns))
+			for i, ns := range r.Ns {
+				fmt.Printf("  权威 #%d: %s\n", i+1, ns.String())
+			}
+		}
+	}
 }
 
 // 运行dig命令检查DNS记录

@@ -605,12 +605,7 @@ func (s *DNSServer) handleQuery(q dns.Question, m *dns.Msg) bool {
 		}
 	}
 
-	// 3. 如果是服务域名，尝试从服务缓存中查询
-	if strings.HasSuffix(domain, serviceDomainSuffix) {
-		return s.handleServiceQuery(domain, q.Qtype, m)
-	}
-
-	// 4. 尝试从DNS记录缓存中查询
+	// 3. 先尝试从DNS记录缓存中查询，优先级高于服务缓存
 	s.cacheMutex.RLock()
 	records, ok := s.dnsCache[domain]
 	s.cacheMutex.RUnlock()
@@ -632,6 +627,11 @@ func (s *DNSServer) handleQuery(q dns.Question, m *dns.Msg) bool {
 				return true
 			}
 		}
+	}
+
+	// 4. 如果是普通服务域名，尝试从服务缓存中查询
+	if strings.HasSuffix(domain, serviceDomainSuffix) && !strings.HasPrefix(domain, "_") {
+		return s.handleServiceQuery(domain, q.Qtype, m)
 	}
 
 	// 5. 如果etcdClient未设置或缓存中没有找到，尝试从etcd获取
@@ -758,6 +758,14 @@ func (s *DNSServer) handleRegularDNSQuery(domain string, qtype uint16, m *dns.Ms
 		return false
 	}
 
+	// 确保记录不为空且有值
+	if record == nil || record.Value == "" {
+		s.logger.Debug("DNS记录为空或值为空",
+			zap.String("domain", domain),
+			zap.String("type", recordType))
+		return false
+	}
+
 	// 创建适当的DNS记录响应
 	switch qtype {
 	case dns.TypeA:
@@ -800,7 +808,10 @@ func (s *DNSServer) handleRegularDNSQuery(domain string, qtype uint16, m *dns.Ms
 		// SRV记录的值格式应为: "priority weight port target"
 		rr, err := dns.NewRR(fmt.Sprintf("%s. SRV %s", domain, record.Value))
 		if err != nil {
-			s.logger.Error("创建SRV记录失败", zap.Error(err))
+			s.logger.Error("创建SRV记录失败",
+				zap.String("domain", domain),
+				zap.String("value", record.Value),
+				zap.Error(err))
 			return false
 		}
 		m.Answer = append(m.Answer, rr)
