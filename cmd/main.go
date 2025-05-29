@@ -24,8 +24,8 @@ var (
 
 // 启动过期服务自动清理任务
 const (
-	cleanupInterval = 10 * time.Second // 每10秒检查一次
-	maxHeartbeatAge = 5 * time.Second  // 超过5秒未心跳的服务视为过期
+	cleanupInterval = 1 * time.Minute  // 每1分钟检查一次
+	maxHeartbeatAge = 30 * time.Second // 超过30秒未心跳的服务视为过期
 )
 
 func init() {

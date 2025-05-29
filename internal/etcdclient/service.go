@@ -505,18 +505,6 @@ func (e *EtcdClient) createOrUpdateServiceDNSRecords(ctx context.Context, instan
 		zap.String("domain", srvDomain),
 		zap.String("value", srvValue))
 
-	// 创建测试SRV记录
-	testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
-
-	if err := e.PutDNSRecord(ctx, testSrvDomain, srvRecord); err != nil {
-		return fmt.Errorf("创建测试SRV记录失败: %w", err)
-	}
-
-	e.logger.Info("为服务创建测试SRV记录",
-		zap.String("service", instance.ServiceName),
-		zap.String("domain", testSrvDomain),
-		zap.String("value", srvValue))
-
 	return nil
 }
 
@@ -555,16 +543,6 @@ func (e *EtcdClient) cleanupServiceDNSRecords(ctx context.Context, instance *Ser
 		e.logger.Info("删除服务SRV记录",
 			zap.String("service", instance.ServiceName),
 			zap.String("domain", srvDomain))
-	}
-
-	// 删除测试SRV记录
-	testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
-	if err := e.DeleteDNSRecord(ctx, testSrvDomain, "SRV"); err != nil {
-		errors = append(errors, fmt.Errorf("删除测试SRV记录失败: %w", err))
-	} else {
-		e.logger.Info("删除服务测试SRV记录",
-			zap.String("service", instance.ServiceName),
-			zap.String("domain", testSrvDomain))
 	}
 
 	// 如果有错误，返回组合的错误信息

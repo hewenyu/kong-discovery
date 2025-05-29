@@ -397,10 +397,6 @@ func (s *DNSServer) cleanupServiceDNSRecords(serviceName, instanceID string, ser
 		srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", serviceName)
 		s.RemoveFromCache(srvDomain, "SRV")
 
-		// 清理测试SRV记录
-		testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
-		s.RemoveFromCache(testSrvDomain, "SRV")
-
 		s.logger.Info("已清理服务相关DNS记录",
 			zap.String("service", serviceName),
 			zap.String("domain", domain))

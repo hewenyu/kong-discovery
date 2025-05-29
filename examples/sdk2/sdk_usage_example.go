@@ -282,11 +282,6 @@ func discoverServiceExample(ctx context.Context) error {
 				srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", ServiceName)
 				querySRVRecord(DNSDiscoveryServer, srvDomain)
 
-				// 查询测试SRV记录
-				fmt.Println("\n2. 查询测试SRV记录:")
-				testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
-				querySRVRecord(DNSDiscoveryServer, testSrvDomain)
-
 				// 直接使用net包进行解析测试
 				ips, err := net.LookupIP(ServiceDomain)
 				if err != nil {
