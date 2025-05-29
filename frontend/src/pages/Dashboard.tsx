@@ -115,7 +115,11 @@ const Dashboard = () => {
             <Statistic title="运行时间" value="1 天" />
           </Col>
           <Col span={8}>
-            <Statistic title="服务API端口" value="8080" />
+            <Statistic 
+              title="服务API端口" 
+              value={8080} 
+              formatter={value => `${value}`} 
+            />
           </Col>
         </Row>
       </div>
