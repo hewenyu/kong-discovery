@@ -157,6 +157,12 @@ func (h *EchoHandler) registerManagementRoutes() {
 	// DNS配置相关端点
 	h.managementServer.GET("/admin/config/upstream-dns", h.getUpstreamDNSHandler)
 	h.managementServer.PUT("/admin/config/upstream-dns", h.updateUpstreamDNSHandler)
+
+	// DNS记录管理相关端点
+	h.managementServer.GET("/admin/dns/domains", h.getAllDNSDomainsHandler)
+	h.managementServer.GET("/admin/dns/records/:domain", h.getDNSRecordsHandler)
+	h.managementServer.POST("/admin/dns/records", h.createDNSRecordHandler)
+	h.managementServer.DELETE("/admin/dns/records/:domain/:type", h.deleteDNSRecordHandler)
 }
 
 // registerRegistrationRoutes 注册服务注册API路由
@@ -614,6 +620,217 @@ func (h *EchoHandler) updateUpstreamDNSHandler(c echo.Context) error {
 		Success:   true,
 		Configs:   configs,
 		Message:   "DNS配置更新成功",
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// DNSDomainsResponse 定义DNS域名列表响应结构
+type DNSDomainsResponse struct {
+	Success   bool     `json:"success"`           // 是否成功
+	Domains   []string `json:"domains"`           // 域名列表
+	Message   string   `json:"message,omitempty"` // 可选消息
+	Count     int      `json:"count"`             // 域名数量
+	Timestamp string   `json:"timestamp"`         // 时间戳
+}
+
+// DNSRecordsResponse 定义DNS记录列表响应结构
+type DNSRecordsResponse struct {
+	Success   bool                             `json:"success"`           // 是否成功
+	Domain    string                           `json:"domain"`            // 域名
+	Records   map[string]*etcdclient.DNSRecord `json:"records"`           // 记录列表
+	Message   string                           `json:"message,omitempty"` // 可选消息
+	Count     int                              `json:"count"`             // 记录数量
+	Timestamp string                           `json:"timestamp"`         // 时间戳
+}
+
+// DNSRecordRequest 定义DNS记录创建请求结构
+type DNSRecordRequest struct {
+	Domain string   `json:"domain" validate:"required"` // 域名
+	Type   string   `json:"type" validate:"required"`   // 记录类型
+	Value  string   `json:"value" validate:"required"`  // 记录值
+	TTL    int      `json:"ttl" validate:"required"`    // TTL（秒）
+	Tags   []string `json:"tags,omitempty"`             // 可选标签
+}
+
+// DNSRecordResponse 定义DNS记录操作响应结构
+type DNSRecordResponse struct {
+	Success   bool   `json:"success"`           // 是否成功
+	Domain    string `json:"domain"`            // 域名
+	Type      string `json:"type"`              // 记录类型
+	Message   string `json:"message,omitempty"` // 可选消息
+	Timestamp string `json:"timestamp"`         // 时间戳
+}
+
+// getAllDNSDomainsHandler 处理获取所有DNS域名的请求
+func (h *EchoHandler) getAllDNSDomainsHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 从etcd获取所有DNS域名
+	domains, err := h.etcdClient.GetAllDNSDomains(ctx)
+	if err != nil {
+		h.logger.Error("获取DNS域名列表失败", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSDomainsResponse{
+			Success:   false,
+			Message:   "获取DNS域名列表失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回域名列表
+	return c.JSON(http.StatusOK, &DNSDomainsResponse{
+		Success:   true,
+		Domains:   domains,
+		Count:     len(domains),
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// getDNSRecordsHandler 处理获取指定域名的DNS记录的请求
+func (h *EchoHandler) getDNSRecordsHandler(c echo.Context) error {
+	// 获取路径参数
+	domain := c.Param("domain")
+
+	// 验证参数
+	if domain == "" {
+		h.logger.Warn("DNS记录请求参数无效")
+		return c.JSON(http.StatusBadRequest, &DNSRecordsResponse{
+			Success:   false,
+			Message:   "请求参数无效：域名是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	ctx := c.Request().Context()
+
+	// 获取域名的所有DNS记录
+	records, err := h.etcdClient.GetDNSRecordsForDomain(ctx, domain)
+	if err != nil {
+		h.logger.Error("获取DNS记录失败",
+			zap.String("domain", domain),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSRecordsResponse{
+			Success:   false,
+			Domain:    domain,
+			Message:   "获取DNS记录失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回记录列表
+	return c.JSON(http.StatusOK, &DNSRecordsResponse{
+		Success:   true,
+		Domain:    domain,
+		Records:   records,
+		Count:     len(records),
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// createDNSRecordHandler 处理创建DNS记录的请求
+func (h *EchoHandler) createDNSRecordHandler(c echo.Context) error {
+	// 解析请求
+	req := new(DNSRecordRequest)
+	if err := c.Bind(req); err != nil {
+		h.logger.Error("解析DNS记录创建请求失败", zap.Error(err))
+		return c.JSON(http.StatusBadRequest, &DNSRecordResponse{
+			Success:   false,
+			Message:   "请求格式错误: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证请求
+	if req.Domain == "" || req.Type == "" || req.Value == "" || req.TTL <= 0 {
+		h.logger.Warn("DNS记录创建请求参数无效",
+			zap.String("domain", req.Domain),
+			zap.String("type", req.Type))
+		return c.JSON(http.StatusBadRequest, &DNSRecordResponse{
+			Success:   false,
+			Message:   "请求参数无效：域名、记录类型、记录值和TTL都是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 创建DNS记录
+	record := &etcdclient.DNSRecord{
+		Type:  req.Type,
+		Value: req.Value,
+		TTL:   req.TTL,
+		Tags:  req.Tags,
+	}
+
+	ctx := c.Request().Context()
+	err := h.etcdClient.PutDNSRecord(ctx, req.Domain, record)
+	if err != nil {
+		h.logger.Error("创建DNS记录失败",
+			zap.String("domain", req.Domain),
+			zap.String("type", req.Type),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSRecordResponse{
+			Success:   false,
+			Domain:    req.Domain,
+			Type:      req.Type,
+			Message:   "创建DNS记录失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回成功响应
+	h.logger.Info("DNS记录创建成功",
+		zap.String("domain", req.Domain),
+		zap.String("type", req.Type))
+	return c.JSON(http.StatusOK, &DNSRecordResponse{
+		Success:   true,
+		Domain:    req.Domain,
+		Type:      req.Type,
+		Message:   "DNS记录创建成功",
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// deleteDNSRecordHandler 处理删除DNS记录的请求
+func (h *EchoHandler) deleteDNSRecordHandler(c echo.Context) error {
+	// 获取路径参数
+	domain := c.Param("domain")
+	recordType := c.Param("type")
+
+	// 验证参数
+	if domain == "" || recordType == "" {
+		h.logger.Warn("DNS记录删除请求参数无效",
+			zap.String("domain", domain),
+			zap.String("type", recordType))
+		return c.JSON(http.StatusBadRequest, &DNSRecordResponse{
+			Success:   false,
+			Message:   "请求参数无效：域名和记录类型都是必需的",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	ctx := c.Request().Context()
+	err := h.etcdClient.DeleteDNSRecord(ctx, domain, recordType)
+	if err != nil {
+		h.logger.Error("删除DNS记录失败",
+			zap.String("domain", domain),
+			zap.String("type", recordType),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSRecordResponse{
+			Success:   false,
+			Domain:    domain,
+			Type:      recordType,
+			Message:   "删除DNS记录失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 返回成功响应
+	h.logger.Info("DNS记录删除成功",
+		zap.String("domain", domain),
+		zap.String("type", recordType))
+	return c.JSON(http.StatusOK, &DNSRecordResponse{
+		Success:   true,
+		Domain:    domain,
+		Type:      recordType,
+		Message:   "DNS记录删除成功",
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 }

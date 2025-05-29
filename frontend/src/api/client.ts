@@ -34,6 +34,42 @@ export interface ServiceDetailResponse {
   timestamp: string;
 }
 
+// DNS记录类型
+export interface DNSRecord {
+  type: string;
+  value: string;
+  ttl: number;
+  tags?: string[];
+}
+
+// DNS域名列表响应
+export interface DNSDomainsResponse {
+  success: boolean;
+  domains: string[];
+  count: number;
+  message?: string;
+  timestamp: string;
+}
+
+// DNS记录列表响应
+export interface DNSRecordsResponse {
+  success: boolean;
+  domain: string;
+  records: Record<string, DNSRecord>;
+  count: number;
+  message?: string;
+  timestamp: string;
+}
+
+// DNS记录操作响应
+export interface DNSRecordResponse {
+  success: boolean;
+  domain: string;
+  type: string;
+  message?: string;
+  timestamp: string;
+}
+
 // 创建axios实例
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -73,6 +109,23 @@ export const dnsApi = {
   // 更新上游DNS配置
   updateUpstreamDNS: (upstreamDNS: string[]) => 
     apiClient.put<any, DNSConfigResponse>('/admin/config/upstream-dns', { upstream_dns: upstreamDNS }),
+
+  // 获取所有DNS域名
+  getAllDNSDomains: () => apiClient.get<any, DNSDomainsResponse>('/admin/dns/domains'),
+
+  // 获取指定域名的所有DNS记录
+  getDNSRecords: (domain: string) => 
+    apiClient.get<any, DNSRecordsResponse>(`/admin/dns/records/${domain}`),
+
+  // 创建DNS记录
+  createDNSRecord: (domain: string, type: string, value: string, ttl: number, tags?: string[]) => 
+    apiClient.post<any, DNSRecordResponse>('/admin/dns/records', { 
+      domain, type, value, ttl, tags 
+    }),
+
+  // 删除DNS记录
+  deleteDNSRecord: (domain: string, type: string) => 
+    apiClient.delete<any, DNSRecordResponse>(`/admin/dns/records/${domain}/${type}`),
 };
 
 export default apiClient; 

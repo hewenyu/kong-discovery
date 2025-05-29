@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { SettingOutlined, GlobalOutlined, SaveOutlined, ReloadOutlined, PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
-import { Form, Input, Button, Card, message, Spin, Space } from 'antd';
+import { SettingOutlined, GlobalOutlined, SaveOutlined, ReloadOutlined, PlusOutlined, MinusCircleOutlined, EditOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Spin, Space, Typography, Divider, Row, Col } from 'antd';
 import { dnsApi } from '../api/client';
 import type { DNSConfigResponse } from '../api/client';
+import { Link } from 'react-router-dom';
+
+const { Title, Text } = Typography;
 
 interface DNSConfig {
   upstream_dns: string[];
@@ -101,7 +104,23 @@ const DnsConfig = () => {
   return (
     <div>
       {contextHolder}
-      <Card title={<><SettingOutlined /> DNS配置管理</>} extra={
+      <Row justify="space-between" align="middle">
+        <Col>
+          <Title level={2}><SettingOutlined /> DNS配置管理</Title>
+          <Text type="secondary">配置上游DNS服务器和自定义DNS记录</Text>
+        </Col>
+        <Col>
+          <Link to="/dns/records">
+            <Button type="primary" icon={<EditOutlined />}>
+              管理DNS记录
+            </Button>
+          </Link>
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <Card title="上游DNS服务器配置" extra={
         <Button 
           type="primary" 
           icon={<ReloadOutlined />} 
@@ -173,6 +192,21 @@ const DnsConfig = () => {
             </Form.Item>
           </Form>
         </Spin>
+      </Card>
+
+      <Divider />
+
+      <Card title="自定义DNS记录">
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text>
+            通过自定义DNS记录，您可以为特定域名配置解析规则，例如将特定域名指向内部服务IP。
+          </Text>
+          <Link to="/dns/records">
+            <Button type="primary" icon={<EditOutlined />}>
+              管理DNS记录
+            </Button>
+          </Link>
+        </Space>
       </Card>
     </div>
   );

@@ -51,7 +51,10 @@ const MainLayout = () => {
   const menuItems: MenuItem[] = [
     getItem(<Link to="/">概览</Link>, 'dashboard', <DashboardOutlined />),
     getItem(<Link to="/services">服务列表</Link>, 'services', <AppstoreOutlined />),
-    getItem(<Link to="/dns">DNS配置</Link>, 'dns', <GlobalOutlined />),
+    getItem('DNS管理', 'dns', <GlobalOutlined />, [
+      getItem(<Link to="/dns">上游DNS配置</Link>, 'dns-config'),
+      getItem(<Link to="/dns/records">DNS记录管理</Link>, 'dns-records'),
+    ]),
     getItem(<Link to="/settings">系统设置</Link>, 'settings', <SettingOutlined />),
   ];
 

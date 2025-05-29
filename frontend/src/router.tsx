@@ -3,6 +3,7 @@ import MainLayout from './layouts/MainLayout';
 import ServiceList from './pages/ServiceList';
 import ServiceDetail from './pages/ServiceDetail';
 import DnsConfig from './pages/DnsConfig';
+import DnsRecords from './pages/DnsRecords';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 import Dashboard from './pages/Dashboard';
@@ -28,6 +29,10 @@ const router = createBrowserRouter([
       {
         path: 'dns',
         element: <DnsConfig />,
+      },
+      {
+        path: 'dns/records',
+        element: <DnsRecords />,
       },
       {
         path: 'settings',

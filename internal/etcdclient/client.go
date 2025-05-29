@@ -46,8 +46,14 @@ type Client interface {
 	// PutDNSRecord 将DNS记录存储到etcd
 	PutDNSRecord(ctx context.Context, domain string, record *DNSRecord) error
 
+	// DeleteDNSRecord 从etcd删除DNS记录
+	DeleteDNSRecord(ctx context.Context, domain string, recordType string) error
+
 	// GetDNSRecordsForDomain 获取域名的所有DNS记录
 	GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*DNSRecord, error)
+
+	// GetAllDNSDomains 获取所有DNS域名
+	GetAllDNSDomains(ctx context.Context) ([]string, error)
 
 	// RegisterService 将服务实例注册到etcd
 	RegisterService(ctx context.Context, instance *ServiceInstance) error
@@ -253,6 +259,30 @@ func (e *EtcdClient) PutDNSRecord(ctx context.Context, domain string, record *DN
 	return nil
 }
 
+// DeleteDNSRecord 从etcd删除DNS记录
+func (e *EtcdClient) DeleteDNSRecord(ctx context.Context, domain string, recordType string) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	key := getDNSRecordKey(domain, recordType)
+
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	// 删除记录
+	_, err := e.client.Delete(ctx, key)
+	if err != nil {
+		e.logger.Error("从etcd删除DNS记录失败", zap.String("key", key), zap.Error(err))
+		return fmt.Errorf("从etcd删除DNS记录失败: %w", err)
+	}
+
+	e.logger.Info("DNS记录删除成功",
+		zap.String("domain", domain),
+		zap.String("type", recordType))
+	return nil
+}
+
 // GetDNSRecordsForDomain 获取域名的所有DNS记录
 func (e *EtcdClient) GetDNSRecordsForDomain(ctx context.Context, domain string) (map[string]*DNSRecord, error) {
 	if e.client == nil {
@@ -375,4 +405,46 @@ func (e *EtcdClient) UpdateDNSConfig(ctx context.Context, key string, value inte
 		zap.String("key", key),
 		zap.Any("value", value))
 	return nil
+}
+
+// GetAllDNSDomains 获取所有DNS域名
+func (e *EtcdClient) GetAllDNSDomains(ctx context.Context) ([]string, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	// DNS记录的前缀
+	prefix := "/dns/records/"
+
+	ctx, cancel := context.WithTimeout(ctx, etcdTimeout)
+	defer cancel()
+
+	// 获取所有以prefix开头的key
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		e.logger.Error("获取DNS域名列表失败", zap.Error(err))
+		return nil, fmt.Errorf("获取DNS域名列表失败: %w", err)
+	}
+
+	// 域名集合，用于去重
+	domainSet := make(map[string]struct{})
+
+	// 从key中提取域名
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// key格式: /dns/records/{domain}/{recordType}
+		parts := strings.Split(key, "/")
+		if len(parts) >= 4 {
+			domain := parts[3]
+			domainSet[domain] = struct{}{}
+		}
+	}
+
+	// 转换为数组
+	domains := make([]string, 0, len(domainSet))
+	for domain := range domainSet {
+		domains = append(domains, domain)
+	}
+
+	return domains, nil
 }
