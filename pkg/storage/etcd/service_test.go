@@ -249,35 +249,74 @@ func testDeregisterService(t *testing.T, ctx context.Context, s *ServiceStorage)
 }
 
 func testCleanupStaleServices(t *testing.T, ctx context.Context, s *ServiceStorage) {
+	// 先检查并删除可能存在的测试服务，避免干扰
+	_ = s.DeregisterService(ctx, "test-service-stale")
+	_ = s.DeregisterService(ctx, "test-service-active")
+
+	time.Sleep(100 * time.Millisecond) // 确保删除操作完成
+
 	// 注册服务
-	services := []*storage.Service{
-		{ID: "test-service-stale", Name: "test-service-stale", IP: "192.168.1.10", Port: 8010},
-		{ID: "test-service-active", Name: "test-service-stale", IP: "192.168.1.11", Port: 8011},
+	staleService := &storage.Service{
+		ID:   "test-service-stale",
+		Name: "test-service-stale",
+		IP:   "192.168.1.10",
+		Port: 8010,
+		// 直接设置为过期时间
+		LastHeartbeat: time.Now().Add(-2 * time.Minute),
 	}
 
-	for _, svc := range services {
-		err := s.RegisterService(ctx, svc)
-		require.NoError(t, err)
+	activeService := &storage.Service{
+		ID:   "test-service-active",
+		Name: "test-service-stale",
+		IP:   "192.168.1.11",
+		Port: 8011,
 	}
 
-	// 获取第一个服务并修改心跳时间
-	staleService, err := s.GetService(ctx, "test-service-stale")
+	// 注册服务
+	err := s.RegisterService(ctx, staleService)
 	require.NoError(t, err)
 
-	// 手动设置过期的心跳时间
-	staleService.LastHeartbeat = time.Now().Add(-2 * time.Minute)
-	err = s.RegisterService(ctx, staleService)
+	err = s.RegisterService(ctx, activeService)
 	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond) // 确保注册操作完成
+
+	// 验证服务已注册且时间正确
+	retrievedStale, err := s.GetService(ctx, "test-service-stale")
+	require.NoError(t, err, "获取过期服务失败")
+
+	t.Logf("过期服务心跳时间: %v, 当前时间: %v, 差值: %v",
+		retrievedStale.LastHeartbeat, time.Now(),
+		time.Now().Sub(retrievedStale.LastHeartbeat))
+
+	// 验证心跳时间是否正确设置为过期
+	assert.True(t, retrievedStale.LastHeartbeat.Before(time.Now().Add(-1*time.Minute)),
+		"过期服务心跳时间应该在1分钟前")
 
 	// 清理过期服务
+	t.Log("开始清理过期服务")
 	err = s.CleanupStaleServices(ctx, 1*time.Minute)
 	require.NoError(t, err)
 
+	// 等待确保etcd操作完成
+	time.Sleep(500 * time.Millisecond)
+
 	// 验证过期服务已被清理
+	t.Log("验证过期服务是否已被清理")
 	_, err = s.GetService(ctx, "test-service-stale")
-	assert.Error(t, err)
+	if err == nil {
+		t.Error("过期服务应该已被清理，但仍能获取到")
+	} else {
+		t.Logf("获取过期服务返回错误: %v", err)
+		storageErr, ok := err.(*storage.StorageError)
+		if !ok {
+			t.Errorf("错误类型不正确: %T", err)
+		} else {
+			assert.Equal(t, storage.ErrNotFound, storageErr.Code)
+		}
+	}
 
 	// 验证活跃服务仍存在
 	_, err = s.GetService(ctx, "test-service-active")
-	assert.NoError(t, err)
+	assert.NoError(t, err, "活跃服务应该仍然存在")
 }

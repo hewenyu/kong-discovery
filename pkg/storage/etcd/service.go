@@ -33,7 +33,12 @@ func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.S
 	if service.RegisteredAt.IsZero() {
 		service.RegisteredAt = now
 	}
-	service.LastHeartbeat = now
+
+	// 只有在LastHeartbeat为零值时才设置为当前时间
+	// 这允许调用者提供自定义的心跳时间
+	if service.LastHeartbeat.IsZero() {
+		service.LastHeartbeat = now
+	}
 
 	// 如果未设置健康状态，默认为健康
 	if service.Health == "" {
@@ -188,12 +193,29 @@ func (s *ServiceStorage) CleanupStaleServices(ctx context.Context, timeout time.
 	}
 
 	now := time.Now()
+	fmt.Printf("当前时间: %v, 清理超时阈值: %v\n", now, timeout)
+
 	for _, service := range services {
+		timeSinceLastHeartbeat := now.Sub(service.LastHeartbeat)
+		fmt.Printf("服务 %s 上次心跳: %v, 时间差: %v\n",
+			service.ID, service.LastHeartbeat, timeSinceLastHeartbeat)
+
 		// 如果心跳超时，注销服务
-		if now.Sub(service.LastHeartbeat) > timeout {
-			if err := s.DeregisterService(ctx, service.ID); err != nil {
-				// 忽略单个服务注销失败，继续处理其他服务
-				continue
+		if timeSinceLastHeartbeat > timeout {
+			fmt.Printf("服务 %s 已超时，正在清理\n", service.ID)
+
+			// 使用独立上下文以确保操作不会被父上下文取消
+			deleteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+			// 直接使用etcd客户端删除，避免可能的业务逻辑问题
+			key := s.client.GetServiceKey(service.ID)
+			_, err := s.client.GetClient().Delete(deleteCtx, key)
+			cancel() // 立即取消context，避免在循环中堆积
+
+			if err != nil {
+				fmt.Printf("清理过期服务 %s 失败: %v\n", service.ID, err)
+			} else {
+				fmt.Printf("已成功清理过期服务 %s\n", service.ID)
 			}
 		}
 	}

@@ -33,7 +33,12 @@ func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.S
 	if service.RegisteredAt.IsZero() {
 		service.RegisteredAt = now
 	}
-	service.LastHeartbeat = now
+
+	// 只有在LastHeartbeat为零值时才设置为当前时间
+	// 这允许调用者提供自定义的心跳时间
+	if service.LastHeartbeat.IsZero() {
+		service.LastHeartbeat = now
+	}
 
 	// 如果未设置健康状态，默认为健康
 	if service.Health == "" {
