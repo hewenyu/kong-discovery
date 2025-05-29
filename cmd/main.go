@@ -22,6 +22,12 @@ var (
 	appConfig  *config.Config
 )
 
+// 启动过期服务自动清理任务
+const (
+	cleanupInterval = 10 * time.Second // 每10秒检查一次
+	maxHeartbeatAge = 5 * time.Second  // 超过5秒未心跳的服务视为过期
+)
+
 func init() {
 	// 解析命令行参数
 	flag.StringVar(&configFile, "config", "", "配置文件路径")
@@ -92,43 +98,10 @@ func main() {
 		zap.String("address", appConfig.API.Registration.ListenAddress),
 		zap.Int("port", appConfig.API.Registration.Port))
 
-	// // 创建测试DNS记录
-	// testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	// defer testCancel()
-
-	// // 1. 创建常规DNS记录
-	// testRecord := &etcdclient.DNSRecord{
-	// 	Type:  "A",
-	// 	Value: "192.168.1.100",
-	// 	TTL:   300,
-	// }
-	// if err := etcdClient.PutDNSRecord(testCtx, "kong.test", testRecord); err != nil {
-	// 	logger.Warn("创建测试DNS记录失败", zap.Error(err))
-	// } else {
-	// 	logger.Info("创建测试DNS记录成功", zap.String("domain", "kong.test"))
-	// }
-
-	// // 2. 注册服务实例
-	// instanceID := uuid.New().String()
-	// serviceInstance := &etcdclient.ServiceInstance{
-	// 	ServiceName: "nginx",
-	// 	InstanceID:  instanceID,
-	// 	IPAddress:   "192.168.1.200",
-	// 	Port:        8080,
-	// 	Metadata: map[string]string{
-	// 		"version": "1.0.0",
-	// 		"env":     "test",
-	// 	},
-	// 	TTL: 60,
-	// }
-
-	// if err := etcdClient.RegisterService(testCtx, serviceInstance); err != nil {
-	// 	logger.Warn("注册测试服务实例失败", zap.Error(err))
-	// } else {
-	// 	logger.Info("注册测试服务实例成功",
-	// 		zap.String("service", serviceInstance.ServiceName),
-	// 		zap.String("id", serviceInstance.InstanceID))
-	// }
+	logger.Info("启动过期服务自动清理任务",
+		zap.Duration("interval", cleanupInterval),
+		zap.Duration("max_heartbeat_age", maxHeartbeatAge))
+	etcdClient.StartCleanupExpiredServices(context.Background(), cleanupInterval, maxHeartbeatAge)
 
 	// 初始化DNS服务器并注入etcd客户端
 	dnsServer := dnsserver.NewDNSServer(appConfig, logger)

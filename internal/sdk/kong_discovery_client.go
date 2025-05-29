@@ -75,6 +75,9 @@ type HeartbeatRequest struct {
 	TTL int `json:"ttl,omitempty"` // 可选的新TTL值
 }
 
+// ServiceHealthCheck 是一个函数类型，用于检查服务是否健康
+type ServiceHealthCheck func() bool
+
 // NewClient 创建Kong Discovery SDK客户端
 func NewClient(registrationURL string) *KongDiscoveryClient {
 	return &KongDiscoveryClient{
@@ -282,6 +285,87 @@ func (c *KongDiscoveryClient) StartHeartbeatLoop(ctx context.Context, serviceNam
 				cancel()
 				if err != nil {
 					fmt.Printf("心跳发送失败: %v\n", err)
+				}
+			}
+		}
+	}()
+}
+
+// StartHeartbeatLoopWithCleanup 启动带清理功能的心跳循环
+func (c *KongDiscoveryClient) StartHeartbeatLoopWithCleanup(
+	ctx context.Context,
+	serviceName,
+	instanceID string,
+	domain string,
+	interval time.Duration,
+	ttl int,
+	healthCheck ServiceHealthCheck,
+	maxFailures int,
+) {
+	if maxFailures <= 0 {
+		maxFailures = 3 // 默认3次失败后执行清理
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		failureCount := 0
+		lastCleanupAttempt := false
+
+		for {
+			select {
+			case <-ctx.Done():
+				// 上下文取消时（如进程退出），尝试清理
+				if !lastCleanupAttempt {
+					lastCleanupAttempt = true
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					// 注销服务
+					_, err := c.Deregister(cleanupCtx, serviceName, instanceID)
+					if err != nil {
+						fmt.Printf("注销服务失败: %v\n", err)
+					}
+					cancel()
+				}
+				return
+			case <-ticker.C:
+				// 检查服务健康状态
+				if healthCheck != nil && !healthCheck() {
+					failureCount++
+					fmt.Printf("服务健康检查失败 (%d/%d)\n", failureCount, maxFailures)
+				} else {
+					// 发送心跳
+					heartbeatCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_, err := c.Heartbeat(heartbeatCtx, serviceName, instanceID, ttl)
+					cancel()
+
+					if err != nil {
+						failureCount++
+						fmt.Printf("心跳发送失败 (%d/%d): %v\n", failureCount, maxFailures, err)
+					} else {
+						// 心跳成功，重置失败计数
+						if failureCount > 0 {
+							fmt.Printf("心跳恢复正常，重置失败计数\n")
+							failureCount = 0
+						}
+					}
+				}
+
+				// 达到最大失败次数，执行清理
+				if failureCount >= maxFailures && !lastCleanupAttempt {
+					fmt.Printf("达到最大失败次数 (%d)，执行资源清理\n", maxFailures)
+					lastCleanupAttempt = true
+
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					// 注销服务
+					_, err := c.Deregister(cleanupCtx, serviceName, instanceID)
+					if err != nil {
+						fmt.Printf("注销服务失败: %v\n", err)
+					}
+					cancel()
+
+					// 清理后退出心跳循环
+					return
 				}
 			}
 		}

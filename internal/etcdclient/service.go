@@ -67,6 +67,15 @@ func (e *EtcdClient) RegisterService(ctx context.Context, instance *ServiceInsta
 		zap.String("ip", instance.IPAddress),
 		zap.Int("port", instance.Port))
 
+	// 自动创建或更新相关的DNS记录
+	if err := e.createOrUpdateServiceDNSRecords(ctx, instance); err != nil {
+		e.logger.Warn("创建服务DNS记录失败，服务注册成功但DNS记录可能不完整",
+			zap.String("service", instance.ServiceName),
+			zap.String("id", instance.InstanceID),
+			zap.Error(err))
+		// 我们不因为DNS记录创建失败而阻止服务注册
+	}
+
 	return nil
 }
 
@@ -76,6 +85,26 @@ func (e *EtcdClient) DeregisterService(ctx context.Context, serviceName, instanc
 		return fmt.Errorf("etcd客户端未连接")
 	}
 
+	// 在删除服务前，先获取服务实例数据
+	serviceInstances, err := e.GetServiceInstances(ctx, serviceName)
+	if err != nil {
+		e.logger.Warn("获取服务实例列表失败，无法检查是否需要清理DNS记录",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		// 继续执行删除操作
+	}
+
+	// 找到要删除的实例
+	var targetInstance *ServiceInstance
+	var remainingCount int
+	for _, instance := range serviceInstances {
+		if instance.InstanceID == instanceID {
+			targetInstance = instance
+		} else {
+			remainingCount++
+		}
+	}
+
 	// 生成服务实例键
 	key := getServiceInstanceKey(serviceName, instanceID)
 
@@ -83,7 +112,7 @@ func (e *EtcdClient) DeregisterService(ctx context.Context, serviceName, instanc
 	defer cancel()
 
 	// 删除键
-	_, err := e.client.Delete(ctx, key)
+	_, err = e.client.Delete(ctx, key)
 	if err != nil {
 		e.logger.Error("注销服务实例失败",
 			zap.String("service", serviceName),
@@ -95,6 +124,17 @@ func (e *EtcdClient) DeregisterService(ctx context.Context, serviceName, instanc
 	e.logger.Info("服务实例注销成功",
 		zap.String("service", serviceName),
 		zap.String("id", instanceID))
+
+	// 如果没有剩余实例，则清理DNS记录
+	if remainingCount == 0 && targetInstance != nil {
+		if err := e.cleanupServiceDNSRecords(ctx, targetInstance); err != nil {
+			e.logger.Warn("清理服务DNS记录失败，服务已注销但DNS记录可能仍然存在",
+				zap.String("service", serviceName),
+				zap.String("id", instanceID),
+				zap.Error(err))
+			// 我们不因为DNS记录清理失败而阻止服务注销
+		}
+	}
 
 	return nil
 }
@@ -310,4 +350,234 @@ func (e *EtcdClient) GetAllServiceNames(ctx context.Context) ([]string, error) {
 	}
 
 	return serviceNames, nil
+}
+
+// IsServiceExpired 检查服务实例是否已过期
+func IsServiceExpired(instance *ServiceInstance, maxHeartbeatAge time.Duration) bool {
+	if instance == nil || instance.LastHeartbeat == "" {
+		return true // 没有心跳记录的服务视为过期
+	}
+
+	lastHeartbeat, err := time.Parse(time.RFC3339, instance.LastHeartbeat)
+	if err != nil {
+		return true // 无法解析心跳时间的服务视为过期
+	}
+
+	// 检查心跳是否超过最大允许时间
+	return time.Since(lastHeartbeat) > maxHeartbeatAge
+}
+
+// StartCleanupExpiredServices 启动过期服务清理定时任务
+func (e *EtcdClient) StartCleanupExpiredServices(ctx context.Context, interval time.Duration, maxHeartbeatAge time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.cleanupExpiredServices(ctx, maxHeartbeatAge)
+			}
+		}
+	}()
+}
+
+// cleanupExpiredServices 清理过期的服务实例
+func (e *EtcdClient) cleanupExpiredServices(ctx context.Context, maxHeartbeatAge time.Duration) {
+	e.logger.Info("开始清理过期服务实例", zap.Duration("max_age", maxHeartbeatAge))
+
+	// 获取所有服务名称
+	serviceNames, err := e.GetAllServiceNames(ctx)
+	if err != nil {
+		e.logger.Error("获取服务列表失败", zap.Error(err))
+		return
+	}
+
+	for _, serviceName := range serviceNames {
+		// 获取该服务的所有实例
+		instances, err := e.GetServiceInstances(ctx, serviceName)
+		if err != nil {
+			e.logger.Error("获取服务实例失败",
+				zap.String("service", serviceName),
+				zap.Error(err))
+			continue
+		}
+
+		for _, instance := range instances {
+			if IsServiceExpired(instance, maxHeartbeatAge) {
+				e.logger.Info("检测到过期服务实例",
+					zap.String("service", instance.ServiceName),
+					zap.String("id", instance.InstanceID),
+					zap.String("last_heartbeat", instance.LastHeartbeat))
+
+				// 尝试注销过期的服务
+				deregisterCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := e.DeregisterService(deregisterCtx, instance.ServiceName, instance.InstanceID)
+				cancel()
+
+				if err != nil {
+					e.logger.Error("注销过期服务失败",
+						zap.String("service", instance.ServiceName),
+						zap.String("id", instance.InstanceID),
+						zap.Error(err))
+				} else {
+					e.logger.Info("已自动注销过期服务",
+						zap.String("service", instance.ServiceName),
+						zap.String("id", instance.InstanceID))
+				}
+			}
+		}
+	}
+}
+
+// createOrUpdateServiceDNSRecords 为服务创建或更新DNS记录
+func (e *EtcdClient) createOrUpdateServiceDNSRecords(ctx context.Context, instance *ServiceInstance) error {
+	// 确定服务域名
+	var domain string
+	// 尝试从元数据中获取域名
+	if instance.Metadata != nil {
+		if d, ok := instance.Metadata["domain"]; ok && d != "" {
+			domain = d
+		}
+	}
+
+	// 如果元数据中没有域名，使用默认命名规则
+	if domain == "" {
+		domain = fmt.Sprintf("%s.default.svc.cluster.local", instance.ServiceName)
+	}
+
+	// 判断是否需要创建A记录
+	// 获取当前实例列表
+	instances, err := e.GetServiceInstances(ctx, instance.ServiceName)
+	if err != nil {
+		return fmt.Errorf("获取服务实例列表失败: %w", err)
+	}
+
+	// 检查是否是第一个实例
+	isFirstInstance := len(instances) <= 1
+
+	// 如果是第一个实例或唯一的实例，创建A记录
+	if isFirstInstance {
+		// 创建A记录
+		aRecord := &DNSRecord{
+			Type:  "A",
+			Value: instance.IPAddress,
+			TTL:   60,
+		}
+
+		if err := e.PutDNSRecord(ctx, domain, aRecord); err != nil {
+			return fmt.Errorf("创建A记录失败: %w", err)
+		}
+
+		e.logger.Info("为服务创建A记录",
+			zap.String("service", instance.ServiceName),
+			zap.String("domain", domain),
+			zap.String("ip", instance.IPAddress))
+	}
+
+	// 创建SRV记录
+	// 确保目标域名以点号结尾，符合DNS格式规范
+	targetDomain := domain
+	if !strings.HasSuffix(targetDomain, ".") {
+		targetDomain = targetDomain + "."
+	}
+
+	// SRV记录域名
+	srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", instance.ServiceName)
+
+	// SRV记录值，格式为: "priority weight port target"
+	srvValue := fmt.Sprintf("10 10 %d %s", instance.Port, targetDomain)
+
+	srvRecord := &DNSRecord{
+		Type:  "SRV",
+		Value: srvValue,
+		TTL:   60,
+	}
+
+	if err := e.PutDNSRecord(ctx, srvDomain, srvRecord); err != nil {
+		return fmt.Errorf("创建SRV记录失败: %w", err)
+	}
+
+	e.logger.Info("为服务创建SRV记录",
+		zap.String("service", instance.ServiceName),
+		zap.String("domain", srvDomain),
+		zap.String("value", srvValue))
+
+	// 创建测试SRV记录
+	testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
+
+	if err := e.PutDNSRecord(ctx, testSrvDomain, srvRecord); err != nil {
+		return fmt.Errorf("创建测试SRV记录失败: %w", err)
+	}
+
+	e.logger.Info("为服务创建测试SRV记录",
+		zap.String("service", instance.ServiceName),
+		zap.String("domain", testSrvDomain),
+		zap.String("value", srvValue))
+
+	return nil
+}
+
+// cleanupServiceDNSRecords 清理服务的DNS记录
+func (e *EtcdClient) cleanupServiceDNSRecords(ctx context.Context, instance *ServiceInstance) error {
+	// 确定服务域名
+	var domain string
+	// 尝试从元数据中获取域名
+	if instance.Metadata != nil {
+		if d, ok := instance.Metadata["domain"]; ok && d != "" {
+			domain = d
+		}
+	}
+
+	// 如果元数据中没有域名，使用默认命名规则
+	if domain == "" {
+		domain = fmt.Sprintf("%s.default.svc.cluster.local", instance.ServiceName)
+	}
+
+	var errors []error
+
+	// 删除A记录
+	if err := e.DeleteDNSRecord(ctx, domain, "A"); err != nil {
+		errors = append(errors, fmt.Errorf("删除A记录失败: %w", err))
+	} else {
+		e.logger.Info("删除服务A记录",
+			zap.String("service", instance.ServiceName),
+			zap.String("domain", domain))
+	}
+
+	// 删除SRV记录
+	srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", instance.ServiceName)
+	if err := e.DeleteDNSRecord(ctx, srvDomain, "SRV"); err != nil {
+		errors = append(errors, fmt.Errorf("删除SRV记录失败: %w", err))
+	} else {
+		e.logger.Info("删除服务SRV记录",
+			zap.String("service", instance.ServiceName),
+			zap.String("domain", srvDomain))
+	}
+
+	// 删除测试SRV记录
+	testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
+	if err := e.DeleteDNSRecord(ctx, testSrvDomain, "SRV"); err != nil {
+		errors = append(errors, fmt.Errorf("删除测试SRV记录失败: %w", err))
+	} else {
+		e.logger.Info("删除服务测试SRV记录",
+			zap.String("service", instance.ServiceName),
+			zap.String("domain", testSrvDomain))
+	}
+
+	// 如果有错误，返回组合的错误信息
+	if len(errors) > 0 {
+		errMsg := "清理DNS记录时发生错误: "
+		for i, err := range errors {
+			if i > 0 {
+				errMsg += "; "
+			}
+			errMsg += err.Error()
+		}
+		return fmt.Errorf(errMsg)
+	}
+
+	return nil
 }

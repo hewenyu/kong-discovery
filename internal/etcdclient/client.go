@@ -84,6 +84,9 @@ type Client interface {
 
 	// UpdateDNSConfig 更新DNS配置
 	UpdateDNSConfig(ctx context.Context, key string, value interface{}) error
+
+	// StartCleanupExpiredServices 启动过期服务清理定时任务
+	StartCleanupExpiredServices(ctx context.Context, interval, maxHeartbeatAge time.Duration)
 }
 
 // EtcdClient 实现Client接口

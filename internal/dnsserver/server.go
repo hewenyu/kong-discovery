@@ -326,6 +326,15 @@ func (s *DNSServer) handleServiceChange(event etcdclient.WatchEvent) {
 
 		s.RemoveServiceFromCache(serviceName, instanceID)
 
+		// 尝试从事件中获取服务对象（可能从PrevValue解析出来）
+		var serviceInstance *etcdclient.ServiceInstance
+		if event.ServiceObj != nil {
+			serviceInstance = event.ServiceObj
+		}
+
+		// 清理相关的DNS记录
+		s.cleanupServiceDNSRecords(serviceName, instanceID, serviceInstance)
+
 		s.logger.Info("服务已删除",
 			zap.String("service", serviceName),
 			zap.String("id", instanceID))
@@ -350,6 +359,55 @@ func (s *DNSServer) handleServiceChange(event etcdclient.WatchEvent) {
 			zap.String("id", service.InstanceID),
 			zap.String("ip", service.IPAddress),
 			zap.Int("port", service.Port))
+	}
+}
+
+// cleanupServiceDNSRecords 清理与服务相关的DNS记录
+func (s *DNSServer) cleanupServiceDNSRecords(serviceName, instanceID string, serviceInstance *etcdclient.ServiceInstance) {
+	// 检查该服务是否还有其他实例
+	s.cacheMutex.RLock()
+	instances, hasService := s.serviceCache[serviceName]
+	remainingCount := len(instances)
+	s.cacheMutex.RUnlock()
+
+	// 如果没有剩余实例，则需要清理DNS记录
+	if !hasService || remainingCount == 0 {
+		s.logger.Info("服务无剩余实例，清理DNS记录",
+			zap.String("service", serviceName))
+
+		// 尝试确定服务的域名
+		var domain string
+
+		// 如果有服务实例对象，尝试从其元数据中获取域名
+		if serviceInstance != nil && serviceInstance.Metadata != nil {
+			if d, ok := serviceInstance.Metadata["domain"]; ok {
+				domain = d
+			}
+		}
+
+		// 如果从元数据中无法获取域名，使用默认命名规则生成域名
+		if domain == "" {
+			domain = fmt.Sprintf("%s.default.svc.cluster.local", serviceName)
+		}
+
+		// 清理A记录
+		s.RemoveFromCache(domain, "A")
+
+		// 清理SRV记录
+		srvDomain := fmt.Sprintf("_%s._tcp.default.svc.cluster.local", serviceName)
+		s.RemoveFromCache(srvDomain, "SRV")
+
+		// 清理测试SRV记录
+		testSrvDomain := "_test-srv._tcp.default.svc.cluster.local"
+		s.RemoveFromCache(testSrvDomain, "SRV")
+
+		s.logger.Info("已清理服务相关DNS记录",
+			zap.String("service", serviceName),
+			zap.String("domain", domain))
+	} else {
+		s.logger.Info("服务仍有其他实例，保留DNS记录",
+			zap.String("service", serviceName),
+			zap.Int("remaining_instances", remainingCount))
 	}
 }
 
