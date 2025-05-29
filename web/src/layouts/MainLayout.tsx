@@ -15,7 +15,8 @@ import {
   IconButton,
   CssBaseline,
   useTheme,
-  Paper
+  Paper,
+  alpha
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -42,7 +43,7 @@ const MainLayout: React.FC = () => {
   };
 
   const menuItems = [
-    { text: '仪表盘', icon: <DashboardIcon />, path: '/' },
+    { text: '概览', icon: <DashboardIcon />, path: '/' },
     { text: '服务管理', icon: <ApiIcon />, path: '/services' },
     { text: 'DNS管理', icon: <DnsIcon />, path: '/dns' },
     { text: '系统监控', icon: <BarChartIcon />, path: '/metrics' },
@@ -50,12 +51,16 @@ const MainLayout: React.FC = () => {
   ];
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', height: '100vh' }}>
       <CssBaseline />
       <AppBar
         position="fixed"
+        elevation={0}
         sx={{
+          backgroundColor: '#1155cb',
           zIndex: theme.zIndex.drawer + 1,
+          boxShadow: 'none',
+          borderBottom: '1px solid #e0e0e0',
           transition: theme.transitions.create(['width', 'margin'], {
             easing: theme.transitions.easing.sharp,
             duration: theme.transitions.duration.leavingScreen,
@@ -83,8 +88,18 @@ const MainLayout: React.FC = () => {
           >
             <MenuIcon />
           </IconButton>
-          <Typography variant="h6" noWrap component="div">
-            Kong DNS服务发现系统
+          <Typography variant="h6" noWrap component="div" sx={{ fontWeight: 600 }}>
+            Kong 服务发现
+            <Box component="span" sx={{ 
+              ml: 1, 
+              fontSize: '0.7rem', 
+              backgroundColor: 'rgba(255,255,255,0.2)', 
+              p: '2px 6px', 
+              borderRadius: '4px', 
+              fontWeight: 'bold' 
+            }}>
+              DNS
+            </Box>
           </Typography>
         </Toolbar>
       </AppBar>
@@ -95,8 +110,11 @@ const MainLayout: React.FC = () => {
           width: drawerWidth,
           flexShrink: 0,
           [`& .MuiDrawer-paper`]: {
+            backgroundColor: '#0A1929',
+            color: 'white',
             width: drawerWidth,
             boxSizing: 'border-box',
+            borderRight: 'none',
             ...(open ? {
               transition: theme.transitions.create('width', {
                 easing: theme.transitions.easing.sharp,
@@ -121,43 +139,86 @@ const MainLayout: React.FC = () => {
           sx={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             px: [1],
+            backgroundColor: '#071426',
+            color: 'white',
+            minHeight: '64px !important',
           }}
         >
-          <IconButton onClick={handleDrawerClose}>
+          {open && (
+            <Typography variant="h6" sx={{ fontWeight: 'bold', ml: 2, fontSize: '1.1rem' }}>
+              Kong Manager
+              <Box component="span" sx={{ 
+                ml: 1, 
+                fontSize: '0.7rem', 
+                backgroundColor: 'rgba(255,255,255,0.2)', 
+                p: '2px 6px', 
+                borderRadius: '4px',
+                verticalAlign: 'middle'
+              }}>
+                DNS
+              </Box>
+            </Typography>
+          )}
+          <IconButton onClick={handleDrawerClose} sx={{ color: 'white' }}>
             <ChevronLeftIcon />
           </IconButton>
         </Toolbar>
-        <Divider />
-        <List>
-          {menuItems.map((item) => (
-            <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
-              <ListItemButton
-                sx={{
-                  minHeight: 48,
-                  justifyContent: open ? 'initial' : 'center',
-                  px: 2.5,
+        <Box sx={{ mt: 2, mb: 2, mx: 2 }}>
+          {/* 空白区域 */}
+        </Box>
+        <List sx={{ p: 0 }}>
+          {menuItems.map((item) => {
+            const isSelected = location.pathname === item.path;
+            return (
+              <ListItem 
+                key={item.text} 
+                disablePadding 
+                sx={{ 
+                  display: 'block',
+                  mb: 0.5,
+                  mx: 1,
                 }}
-                selected={location.pathname === item.path}
-                onClick={() => navigate(item.path)}
               >
-                <ListItemIcon
+                <ListItemButton
                   sx={{
-                    minWidth: 0,
-                    mr: open ? 3 : 'auto',
-                    justifyContent: 'center',
+                    minHeight: 44,
+                    justifyContent: open ? 'initial' : 'center',
+                    px: 2,
+                    py: 1,
+                    borderRadius: '4px',
+                    backgroundColor: isSelected ? alpha(theme.palette.primary.main, 0.2) : 'transparent',
+                    '&:hover': {
+                      backgroundColor: isSelected ? alpha(theme.palette.primary.main, 0.3) : alpha(theme.palette.primary.main, 0.1),
+                    }
                   }}
+                  onClick={() => navigate(item.path)}
                 >
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText 
-                  primary={item.text} 
-                  sx={{ opacity: open ? 1 : 0 }} 
-                />
-              </ListItemButton>
-            </ListItem>
-          ))}
+                  <ListItemIcon
+                    sx={{
+                      minWidth: 0,
+                      mr: open ? 2 : 'auto',
+                      justifyContent: 'center',
+                      color: isSelected ? 'white' : 'rgba(255,255,255,0.7)',
+                    }}
+                  >
+                    {item.icon}
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={item.text} 
+                    sx={{ 
+                      opacity: open ? 1 : 0,
+                      '& .MuiTypography-root': {
+                        fontWeight: isSelected ? 500 : 400,
+                        color: isSelected ? 'white' : 'rgba(255,255,255,0.7)',
+                      }
+                    }} 
+                  />
+                </ListItemButton>
+              </ListItem>
+            );
+          })}
         </List>
       </Drawer>
       <Box
@@ -167,19 +228,14 @@ const MainLayout: React.FC = () => {
           p: 3,
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           mt: 8,
-          backgroundColor: theme.palette.grey[100],
-          minHeight: '100vh',
+          backgroundColor: '#f7f9fc',
+          minHeight: 'calc(100vh - 64px)',
+          overflow: 'auto'
         }}
       >
-        <Paper 
-          elevation={0} 
-          sx={{ 
-            p: 2, 
-            backgroundColor: 'transparent' 
-          }}
-        >
+        <Box sx={{ maxWidth: '1400px', mx: 'auto' }}>
           <Outlet />
-        </Paper>
+        </Box>
       </Box>
     </Box>
   );

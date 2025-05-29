@@ -275,63 +275,106 @@ const Services: React.FC = () => {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">服务管理</Typography>
-        <Box>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchServices}
-            sx={{ mr: 2 }}
-          >
-            刷新
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setOpenRegisterDialog(true)}
-          >
-            注册服务
-          </Button>
+      <Box sx={{ mb: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Typography variant="h4" sx={{ fontWeight: 500, color: '#0A1929' }}>
+            服务管理
+          </Typography>
+          <Box>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={fetchServices}
+              sx={{ mr: 2 }}
+            >
+              刷新
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setOpenRegisterDialog(true)}
+              sx={{ backgroundColor: '#1155cb' }}
+            >
+              注册服务
+            </Button>
+          </Box>
         </Box>
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Paper sx={{ height: 500, width: '100%', p: 2, overflow: 'auto' }}>
+      <Paper 
+        sx={{ 
+          width: '100%', 
+          overflow: 'hidden',
+          boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.05)',
+          borderRadius: '8px',
+          border: '1px solid #eaeef3'
+        }}
+      >
         {services.length > 0 ? (
-          <>
-            <DataGrid
-              rows={services}
-              columns={columns}
-              autoHeight
-              disableRowSelectionOnClick
-              initialState={{
-                pagination: {
-                  paginationModel: { page: 0, pageSize: 10 },
-                },
-              }}
-              pageSizeOptions={[5, 10, 25]}
-              sx={{
-                '& .MuiDataGrid-cell': {
-                  borderBottom: '1px solid #f0f0f0'
-                },
-                '& .MuiDataGrid-columnHeaders': {
-                  backgroundColor: '#f5f5f5'
-                }
-              }}
-              loading={loading}
-            />
-          </>
+          <DataGrid
+            rows={services}
+            columns={columns}
+            autoHeight
+            disableRowSelectionOnClick
+            initialState={{
+              pagination: {
+                paginationModel: { page: 0, pageSize: 10 },
+              },
+              sorting: {
+                sortModel: [{ field: 'registered_at', sort: 'desc' }],
+              },
+            }}
+            pageSizeOptions={[5, 10, 25]}
+            sx={{
+              border: 'none',
+              '& .MuiDataGrid-cell': {
+                borderBottom: '1px solid #eaeef3',
+                padding: '12px 16px',
+              },
+              '& .MuiDataGrid-columnHeaders': {
+                backgroundColor: '#f7f9fc',
+                borderBottom: '1px solid #eaeef3',
+              },
+              '& .MuiDataGrid-columnHeaderTitle': {
+                fontWeight: 600,
+                color: '#0A1929',
+              },
+              '& .MuiDataGrid-row:hover': {
+                backgroundColor: '#f7f9fc',
+              },
+              '& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within': {
+                outline: 'none',
+              },
+              '& .MuiDataGrid-columnHeader:focus, & .MuiDataGrid-columnHeader:focus-within': {
+                outline: 'none',
+              },
+              '& .MuiDataGrid-footerContainer': {
+                borderTop: '1px solid #eaeef3',
+              },
+            }}
+            loading={loading}
+          />
         ) : (
-          <Box sx={{ textAlign: 'center', p: 3 }}>
-            <Typography variant="body1" color="text.secondary">
+          <Box sx={{ textAlign: 'center', p: 6 }}>
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>
               {loading ? '加载中...' : '没有服务数据'}
             </Typography>
+            {!loading && (
+              <Button 
+                variant="outlined" 
+                startIcon={<AddIcon />} 
+                onClick={() => setOpenRegisterDialog(true)}
+                sx={{ mt: 2 }}
+              >
+                注册第一个服务
+              </Button>
+            )}
           </Box>
         )}
       </Paper>
@@ -342,9 +385,24 @@ const Services: React.FC = () => {
         onClose={() => setOpenRegisterDialog(false)}
         maxWidth="md"
         fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '8px',
+            boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.1)',
+          }
+        }}
       >
-        <DialogTitle>注册新服务</DialogTitle>
-        <DialogContent>
+        <DialogTitle sx={{ 
+          backgroundColor: '#f7f9fc', 
+          borderBottom: '1px solid #eaeef3',
+          px: 3,
+          py: 2
+        }}>
+          <Typography variant="h5" sx={{ fontWeight: 500, color: '#0A1929' }}>
+            注册新服务
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3, pt: 3 }}>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 2, mt: 1 }}>
             <TextField
               label="服务名称"
@@ -474,12 +532,15 @@ const Services: React.FC = () => {
             </Box>
           </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenRegisterDialog(false)}>取消</Button>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid #eaeef3' }}>
+          <Button onClick={() => setOpenRegisterDialog(false)} sx={{ color: '#666' }}>
+            取消
+          </Button>
           <Button 
             onClick={handleRegisterService}
             variant="contained"
             disabled={!newService.name || !newService.ip || !newService.port}
+            sx={{ backgroundColor: '#1155cb', '&:hover': { backgroundColor: '#0c3e8f' } }}
           >
             注册
           </Button>
@@ -492,9 +553,24 @@ const Services: React.FC = () => {
         onClose={() => setOpenDetailDialog(false)}
         maxWidth="md"
         fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '8px',
+            boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.1)',
+          }
+        }}
       >
-        <DialogTitle>服务详情</DialogTitle>
-        <DialogContent>
+        <DialogTitle sx={{ 
+          backgroundColor: '#f7f9fc', 
+          borderBottom: '1px solid #eaeef3',
+          px: 3,
+          py: 2
+        }}>
+          <Typography variant="h5" sx={{ fontWeight: 500, color: '#0A1929' }}>
+            服务详情
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3, pt: 3 }}>
           {selectedService ? (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 2, mt: 1 }}>
               <Box>
@@ -585,8 +661,10 @@ const Services: React.FC = () => {
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenDetailDialog(false)}>关闭</Button>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid #eaeef3' }}>
+          <Button onClick={() => setOpenDetailDialog(false)} sx={{ color: '#666' }}>
+            关闭
+          </Button>
           {selectedService && (
             <Button 
               onClick={() => {
@@ -594,6 +672,8 @@ const Services: React.FC = () => {
                 setOpenDetailDialog(false);
               }}
               color="error"
+              variant="outlined"
+              sx={{ borderColor: '#d32f2f' }}
             >
               注销服务
             </Button>

@@ -18,21 +18,34 @@ import Settings from './pages/Settings';
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#1976d2',
+      main: '#1155cb', // Kong的蓝色
+      dark: '#0c3e8f',
+      light: '#4285f4',
     },
     secondary: {
-      main: '#dc004e',
+      main: '#07a88d', // Kong的绿色
     },
     background: {
-      default: '#f5f5f5',
+      default: '#f7f9fc',
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#333333',
+      secondary: '#666666',
+    },
+    error: {
+      main: '#d32f2f',
+    },
+    success: {
+      main: '#24a16e', // Kong的成功绿色
     },
   },
   typography: {
     fontFamily: [
+      'Roboto',
       '-apple-system',
       'BlinkMacSystemFont',
       '"Segoe UI"',
-      'Roboto',
       '"Helvetica Neue"',
       'Arial',
       'sans-serif',
@@ -40,6 +53,44 @@ const theme = createTheme({
       '"Segoe UI Emoji"',
       '"Segoe UI Symbol"',
     ].join(','),
+    h4: {
+      fontWeight: 500,
+      fontSize: '1.5rem',
+    },
+    h5: {
+      fontWeight: 500,
+      fontSize: '1.25rem',
+    },
+    subtitle1: {
+      fontWeight: 500,
+    },
+  },
+  shape: {
+    borderRadius: 4,
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 500,
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.05)',
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          fontWeight: 500,
+        },
+      },
+    },
   },
 }, zhCN); // 使用中文本地化
 
