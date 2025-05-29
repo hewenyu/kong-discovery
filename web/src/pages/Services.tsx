@@ -305,76 +305,27 @@ const Services: React.FC = () => {
       <Paper sx={{ height: 500, width: '100%', p: 2, overflow: 'auto' }}>
         {services.length > 0 ? (
           <>
-            {/* <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle1" gutterBottom>
-                调试信息:
-              </Typography>
-              <Typography variant="body2">
-                原始日期: {services[0].registered_at}
-              </Typography>
-              <Typography variant="body2">
-                格式化日期: {formatDateTime(services[0].registered_at)}
-              </Typography>
-            </Box> */}
-            
-            {/* 使用原生表格代替DataGrid */}
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>服务名称</th>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>IP地址</th>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>端口</th>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>健康状态</th>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>注册时间</th>
-                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {services.map((service) => (
-                  <tr key={service.id}>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.name}</td>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.ip}</td>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.port}</td>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
-                      <Chip 
-                        label={service.health} 
-                        color={service.health === 'healthy' ? 'success' : 'error'} 
-                        size="small"
-                      />
-                    </td>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
-                      {service.registered_at ? 
-                        (() => {
-                          // 简单拆分日期字符串
-                          if (service.registered_at.includes('T')) {
-                            const [datePart, timePart] = service.registered_at.split('T');
-                            const time = timePart.split('.')[0];
-                            return `${datePart} ${time}`;
-                          }
-                          return service.registered_at;
-                        })() : '未知'}
-                    </td>
-                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleViewService(service.id)}
-                        title="查看详情"
-                      >
-                        <VisibilityIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDeregisterService(service.id)}
-                        title="注销服务"
-                        color="error"
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataGrid
+              rows={services}
+              columns={columns}
+              autoHeight
+              disableRowSelectionOnClick
+              initialState={{
+                pagination: {
+                  paginationModel: { page: 0, pageSize: 10 },
+                },
+              }}
+              pageSizeOptions={[5, 10, 25]}
+              sx={{
+                '& .MuiDataGrid-cell': {
+                  borderBottom: '1px solid #f0f0f0'
+                },
+                '& .MuiDataGrid-columnHeaders': {
+                  backgroundColor: '#f5f5f5'
+                }
+              }}
+              loading={loading}
+            />
           </>
         ) : (
           <Box sx={{ textAlign: 'center', p: 3 }}>
