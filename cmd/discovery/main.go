@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/hewenyu/kong-discovery/pkg/api/handler"
 	"github.com/hewenyu/kong-discovery/pkg/api/router"
 	"github.com/hewenyu/kong-discovery/pkg/config"
+	"github.com/hewenyu/kong-discovery/pkg/dns"
 	"github.com/hewenyu/kong-discovery/pkg/storage/etcd"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -80,28 +84,79 @@ func main() {
 		})
 	})
 
-	// 启动后台任务：清理过期服务
-	go startCleanupTask(serviceStorage, cfg.Heartbeat.Timeout)
+	// 创建上下文用于优雅关闭
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// 启动服务器
-	log.Printf("启动 Kong DNS Discovery 服务，监听端口: %d", cfg.Server.RegisterPort)
-	if err := e.Start(fmt.Sprintf(":%d", cfg.Server.RegisterPort)); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("服务器启动失败: %v", err)
+	// 启动后台任务：清理过期服务
+	go startCleanupTask(ctx, serviceStorage, cfg.Heartbeat.Timeout)
+
+	// 初始化并启动DNS服务器
+	dnsServer, err := dns.NewServer(cfg, serviceStorage)
+	if err != nil {
+		log.Fatalf("创建DNS服务器失败: %v", err)
 	}
+
+	// 启动DNS服务器
+	if err := dnsServer.Start(ctx); err != nil {
+		log.Fatalf("启动DNS服务器失败: %v", err)
+	}
+	log.Printf("DNS服务器启动成功，监听端口: %d", cfg.Server.DNSPort)
+
+	// 创建HTTP服务器
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Server.RegisterPort),
+		Handler: e,
+	}
+
+	// 启动HTTP服务器
+	go func() {
+		log.Printf("启动 Kong DNS Discovery 服务，监听端口: %d", cfg.Server.RegisterPort)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP服务器启动失败: %v", err)
+		}
+	}()
+
+	// 监听系统信号以优雅关闭
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("正在关闭服务器...")
+
+	// 优雅关闭
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	// 关闭HTTP服务器
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP服务器关闭失败: %v", err)
+	}
+
+	// 关闭DNS服务器
+	if err := dnsServer.Stop(); err != nil {
+		log.Printf("DNS服务器关闭失败: %v", err)
+	}
+
+	log.Println("服务器已关闭")
 }
 
 // startCleanupTask 启动清理过期服务的定时任务
-func startCleanupTask(storage *etcd.ServiceStorage, timeoutSeconds int) {
+func startCleanupTask(ctx context.Context, storage *etcd.ServiceStorage, timeoutSeconds int) {
 	ticker := time.NewTicker(30 * time.Second) // 每30秒检查一次
 	defer ticker.Stop()
 
-	for range ticker.C {
-		ctx := context.Background()
-		timeout := time.Duration(timeoutSeconds) * time.Second
-		if err := storage.CleanupStaleServices(ctx, timeout); err != nil {
-			log.Printf("清理过期服务失败: %v", err)
-		} else {
-			log.Println("清理过期服务完成")
+	for {
+		select {
+		case <-ticker.C:
+			timeout := time.Duration(timeoutSeconds) * time.Second
+			if err := storage.CleanupStaleServices(ctx, timeout); err != nil {
+				log.Printf("清理过期服务失败: %v", err)
+			} else {
+				log.Println("清理过期服务完成")
+			}
+		case <-ctx.Done():
+			log.Println("停止清理过期服务任务")
+			return
 		}
 	}
 }
