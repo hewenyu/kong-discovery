@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Typography, Tag, Space, Button, Input } from 'antd';
+import { Table, Card, Typography, Tag, Space, Button, Input, Dropdown, Menu } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { serviceApi } from '../api/client';
 import type { ServiceInstanceResponse } from '../api/client';
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, SettingOutlined, LinkOutlined, DownOutlined } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
 
@@ -62,12 +62,58 @@ const ServiceList = () => {
         service.ip.includes(searchValue))
     : services;
 
+  // 按服务名分组
+  const groupedServices = filteredServices.reduce((acc, service) => {
+    const { serviceName } = service;
+    if (!acc[serviceName]) {
+      acc[serviceName] = [];
+    }
+    acc[serviceName].push(service);
+    return acc;
+  }, {} as Record<string, Service[]>);
+
+  // 服务操作下拉菜单
+  const getServiceMenu = (serviceName: string) => (
+    <Menu>
+      <Menu.Item 
+        key="dns-settings" 
+        icon={<SettingOutlined />}
+        onClick={() => navigate(`/services/${serviceName}/dns-settings`)}
+      >
+        DNS设置
+      </Menu.Item>
+      <Menu.Item 
+        key="dns-associations" 
+        icon={<LinkOutlined />}
+        onClick={() => navigate(`/services/${serviceName}/dns-associations`)}
+      >
+        DNS关联关系
+      </Menu.Item>
+    </Menu>
+  );
+
   const columns = [
     {
       title: '服务名称',
       dataIndex: 'serviceName',
       key: 'serviceName',
-      render: (text: string) => <Text strong className="kong-text-accent">{text}</Text>,
+      render: (text: string, record: Service) => {
+        // 检查是否是此服务的第一个实例，如果是，才显示服务操作菜单
+        const isFirstInstance = groupedServices[text][0].instanceId === record.instanceId;
+        
+        return (
+          <Space>
+            <Text strong className="kong-text-accent">{text}</Text>
+            {isFirstInstance && (
+              <Dropdown overlay={getServiceMenu(text)}>
+                <Button type="text" size="small">
+                  服务操作 <DownOutlined />
+                </Button>
+              </Dropdown>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: '实例ID',
@@ -110,7 +156,7 @@ const ServiceList = () => {
             type="link" 
             onClick={() => navigate(`/services/${record.serviceName}/${record.instanceId}`)}
           >
-            详情
+            实例详情
           </Button>
         </Space>
       ),

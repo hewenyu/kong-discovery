@@ -7,6 +7,8 @@ import DnsRecords from './pages/DnsRecords';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 import Dashboard from './pages/Dashboard';
+import ServiceDNSSettings from './pages/ServiceDNSSettings';
+import ServiceDNSAssociation from './pages/ServiceDNSAssociation';
 
 // 创建路由器，使用basename选项适应Vite开发服务器的路由
 const router = createBrowserRouter([
@@ -25,6 +27,14 @@ const router = createBrowserRouter([
       {
         path: 'services/:serviceName/:instanceId',
         element: <ServiceDetail />,
+      },
+      {
+        path: 'services/:serviceName/dns-settings',
+        element: <ServiceDNSSettings />,
+      },
+      {
+        path: 'services/:serviceName/dns-associations',
+        element: <ServiceDNSAssociation />,
       },
       {
         path: 'dns',

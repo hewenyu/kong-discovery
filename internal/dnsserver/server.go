@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,7 @@ type DNSServer struct {
 	cacheMutex     sync.RWMutex
 	dnsCache       map[string]map[string]*etcdclient.DNSRecord       // domain -> recordType -> record
 	serviceCache   map[string]map[string]*etcdclient.ServiceInstance // serviceName -> instanceID -> instance
+	rrCounters     map[string]int                                    // 轮询负载均衡计数器
 	watcherStarted bool
 
 	// 上游DNS配置
@@ -75,6 +77,7 @@ func NewDNSServer(cfg *config.Config, logger config.Logger) Server {
 		serviceCache:         make(map[string]map[string]*etcdclient.ServiceInstance),
 		upstreamDNS:          cfg.DNS.UpstreamDNS, // 初始使用配置文件中的上游DNS
 		currentUpstreamIndex: 0,
+		rrCounters:           make(map[string]int),
 	}
 }
 
@@ -757,6 +760,44 @@ func (s *DNSServer) handleServiceQueryWithInstances(domain string, qtype uint16,
 		return false
 	}
 
+	// 如果etcdClient为nil，使用默认策略
+	if s.etcdClient == nil {
+		return s.handleServiceQueryWithDefaultPolicy(domain, qtype, instances, m)
+	}
+
+	// 提取服务名
+	parts := strings.Split(domain, ".")
+	if len(parts) < 1 {
+		s.logger.Warn("无效的服务域名格式", zap.String("domain", domain))
+		return s.handleServiceQueryWithDefaultPolicy(domain, qtype, instances, m)
+	}
+	serviceName := parts[0]
+
+	// 获取服务DNS设置
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	settings, err := s.etcdClient.GetServiceDNSSettings(ctx, serviceName)
+	if err != nil {
+		s.logger.Warn("获取服务DNS设置失败，使用默认策略",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return s.handleServiceQueryWithDefaultPolicy(domain, qtype, instances, m)
+	}
+
+	// 根据设置处理查询
+	switch qtype {
+	case dns.TypeA:
+		return s.handleARecordWithLoadBalancing(domain, instances, settings, m)
+	case dns.TypeSRV:
+		return s.handleSRVRecordWithLoadBalancing(domain, instances, settings, m)
+	default:
+		return false
+	}
+}
+
+// handleServiceQueryWithDefaultPolicy 使用默认策略处理服务查询
+func (s *DNSServer) handleServiceQueryWithDefaultPolicy(domain string, qtype uint16, instances []*etcdclient.ServiceInstance, m *dns.Msg) bool {
 	switch qtype {
 	case dns.TypeA:
 		// 对于A记录，返回第一个实例的IP（简单负载均衡可以在上层实现）
@@ -794,6 +835,166 @@ func (s *DNSServer) handleServiceQueryWithInstances(domain string, qtype uint16,
 	}
 
 	return false
+}
+
+// handleARecordWithLoadBalancing 根据负载均衡策略处理A记录
+func (s *DNSServer) handleARecordWithLoadBalancing(domain string, instances []*etcdclient.ServiceInstance, settings *etcdclient.ServiceDNSSettings, m *dns.Msg) bool {
+	if len(instances) == 0 {
+		return false
+	}
+
+	// 根据负载均衡策略选择实例
+	var selectedInstance *etcdclient.ServiceInstance
+
+	switch settings.LoadBalancePolicy {
+	case "first-only":
+		// 总是选择第一个实例
+		selectedInstance = instances[0]
+
+	case "random":
+		// 随机选择一个实例
+		rand.Seed(time.Now().UnixNano())
+		selectedInstance = instances[rand.Intn(len(instances))]
+
+	case "weighted":
+		// 按权重选择实例
+		if len(settings.InstanceWeights) > 0 {
+			// 计算总权重
+			totalWeight := 0
+			instanceWeights := make(map[string]int)
+
+			// 只考虑当前存在的实例
+			for _, instance := range instances {
+				if weight, ok := settings.InstanceWeights[instance.InstanceID]; ok && weight > 0 {
+					instanceWeights[instance.InstanceID] = weight
+					totalWeight += weight
+				} else {
+					// 默认权重为1
+					instanceWeights[instance.InstanceID] = 1
+					totalWeight += 1
+				}
+			}
+
+			// 按权重随机选择
+			if totalWeight > 0 {
+				rand.Seed(time.Now().UnixNano())
+				r := rand.Intn(totalWeight)
+				currentWeight := 0
+
+				for _, instance := range instances {
+					weight := instanceWeights[instance.InstanceID]
+					currentWeight += weight
+					if r < currentWeight {
+						selectedInstance = instance
+						break
+					}
+				}
+			}
+		}
+
+		// 如果权重选择失败，回退到随机选择
+		if selectedInstance == nil {
+			rand.Seed(time.Now().UnixNano())
+			selectedInstance = instances[rand.Intn(len(instances))]
+		}
+
+	case "round-robin":
+		fallthrough
+	default:
+		// 轮询选择（默认策略）
+		// 使用域名作为轮询计数器的键
+		s.cacheMutex.Lock()
+		counterKey := fmt.Sprintf("rr_counter_%s", domain)
+		counter, ok := s.rrCounters[counterKey]
+		if !ok || counter >= len(instances) {
+			counter = 0
+		}
+		selectedInstance = instances[counter]
+		s.rrCounters[counterKey] = (counter + 1) % len(instances)
+		s.cacheMutex.Unlock()
+	}
+
+	// 创建A记录
+	if selectedInstance != nil {
+		rr, err := dns.NewRR(fmt.Sprintf("%s. %d IN A %s", domain, settings.ATTL, selectedInstance.IPAddress))
+		if err != nil {
+			s.logger.Error("创建A记录失败", zap.Error(err))
+			return false
+		}
+		m.Answer = append(m.Answer, rr)
+
+		s.logger.Debug("使用负载均衡策略返回A记录",
+			zap.String("domain", domain),
+			zap.String("policy", settings.LoadBalancePolicy),
+			zap.String("selected_instance", selectedInstance.InstanceID),
+			zap.String("ip", selectedInstance.IPAddress))
+
+		return true
+	}
+
+	return false
+}
+
+// handleSRVRecordWithLoadBalancing 根据负载均衡策略处理SRV记录
+func (s *DNSServer) handleSRVRecordWithLoadBalancing(domain string, instances []*etcdclient.ServiceInstance, settings *etcdclient.ServiceDNSSettings, m *dns.Msg) bool {
+	if len(instances) == 0 {
+		return false
+	}
+
+	// SRV记录总是返回所有实例，但可以通过权重影响顺序
+	instancesWithWeights := make([]*etcdclient.ServiceInstance, len(instances))
+	copy(instancesWithWeights, instances)
+
+	// 如果是加权策略，按权重排序实例
+	if settings.LoadBalancePolicy == "weighted" && len(settings.InstanceWeights) > 0 {
+		sort.Slice(instancesWithWeights, func(i, j int) bool {
+			iWeight := 1 // 默认权重
+			jWeight := 1
+
+			if w, ok := settings.InstanceWeights[instancesWithWeights[i].InstanceID]; ok {
+				iWeight = w
+			}
+			if w, ok := settings.InstanceWeights[instancesWithWeights[j].InstanceID]; ok {
+				jWeight = w
+			}
+
+			// 权重高的排在前面
+			return iWeight > jWeight
+		})
+	}
+
+	// 返回所有实例的SRV记录
+	for _, instance := range instancesWithWeights {
+		// 计算实例的权重
+		weight := 10 // 默认权重
+		if settings.LoadBalancePolicy == "weighted" {
+			if w, ok := settings.InstanceWeights[instance.InstanceID]; ok && w > 0 {
+				weight = w
+			}
+		}
+
+		// SRV记录格式: _service._proto.name. TTL class SRV priority weight port target
+		target := fmt.Sprintf("%s.%s", instance.InstanceID, domain)
+		rrStr := fmt.Sprintf("%s. %d IN SRV 10 %d %d %s",
+			domain, settings.SRVTTL, weight, instance.Port, target)
+
+		rr, err := dns.NewRR(rrStr)
+		if err != nil {
+			s.logger.Error("创建SRV记录失败", zap.Error(err))
+			continue
+		}
+
+		m.Answer = append(m.Answer, rr)
+
+		// 添加A记录作为附加信息
+		additionalRR, err := dns.NewRR(fmt.Sprintf("%s. %d IN A %s",
+			target, settings.ATTL, instance.IPAddress))
+		if err == nil {
+			m.Extra = append(m.Extra, additionalRR)
+		}
+	}
+
+	return len(m.Answer) > 0
 }
 
 // handleRegularDNSQuery 处理普通DNS查询

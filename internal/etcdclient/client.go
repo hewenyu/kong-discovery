@@ -23,6 +23,32 @@ type DNSRecord struct {
 	Tags  []string `json:"tags,omitempty"` // 可选标签，用于记录分组或筛选
 }
 
+// ServiceDNSSettings 定义服务的DNS设置
+type ServiceDNSSettings struct {
+	// 负载均衡策略: "round-robin", "random", "weighted", "first-only"
+	LoadBalancePolicy string `json:"load_balance_policy"`
+
+	// A记录的TTL (秒)
+	ATTL int `json:"a_ttl"`
+
+	// SRV记录的TTL (秒)
+	SRVTTL int `json:"srv_ttl"`
+
+	// 自定义域名 (如果为空则使用默认格式: service.default.svc.cluster.local)
+	CustomDomain string `json:"custom_domain,omitempty"`
+
+	// 实例权重 (当LoadBalancePolicy为"weighted"时使用)
+	// key为instanceID，value为权重值
+	InstanceWeights map[string]int `json:"instance_weights,omitempty"`
+}
+
+// ServiceDNSAssociation 表示服务与DNS的关联关系
+type ServiceDNSAssociation struct {
+	ServiceName string   `json:"service_name"` // 服务名称
+	Domains     []string `json:"domains"`      // 关联的域名列表
+	RecordTypes []string `json:"record_types"` // 关联的记录类型列表
+}
+
 // Client 定义etcd客户端接口
 type Client interface {
 	// Connect 连接到etcd集群
@@ -87,6 +113,26 @@ type Client interface {
 
 	// StartCleanupExpiredServices 启动过期服务清理定时任务
 	StartCleanupExpiredServices(ctx context.Context, interval, maxHeartbeatAge time.Duration)
+
+	// 以下是新增的服务-DNS关联关系管理方法
+
+	// AssociateDNSWithService 将DNS记录关联到服务
+	AssociateDNSWithService(ctx context.Context, serviceName string, domain string, recordType string) error
+
+	// DisassociateDNSFromService 解除DNS记录与服务的关联
+	DisassociateDNSFromService(ctx context.Context, serviceName string, domain string, recordType string) error
+
+	// GetServiceDNSAssociations 获取服务关联的所有DNS记录
+	GetServiceDNSAssociations(ctx context.Context, serviceName string) (map[string][]string, error)
+
+	// GetDNSServiceAssociations 获取DNS记录关联的所有服务
+	GetDNSServiceAssociations(ctx context.Context, domain string, recordType string) ([]string, error)
+
+	// UpdateServiceDNSSettings 更新服务的DNS设置（如负载均衡策略等）
+	UpdateServiceDNSSettings(ctx context.Context, serviceName string, settings *ServiceDNSSettings) error
+
+	// GetServiceDNSSettings 获取服务的DNS设置
+	GetServiceDNSSettings(ctx context.Context, serviceName string) (*ServiceDNSSettings, error)
 }
 
 // EtcdClient 实现Client接口

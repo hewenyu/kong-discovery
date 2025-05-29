@@ -14,6 +14,45 @@ export interface DNSConfigResponse {
   timestamp: string;
 }
 
+// 服务-DNS关联关系响应
+export interface ServiceDNSAssociationResponse {
+  success: boolean;
+  service_name: string;
+  associations: Record<string, string[]>; // 域名 -> 记录类型列表
+  count: number;
+  message?: string;
+  timestamp: string;
+}
+
+// DNS-服务关联关系响应
+export interface DNSServiceAssociationResponse {
+  success: boolean;
+  domain: string;
+  record_type: string;
+  services: string[]; // 服务名称列表
+  count: number;
+  message?: string;
+  timestamp: string;
+}
+
+// 服务DNS设置
+export interface ServiceDNSSettings {
+  load_balance_policy: string; // "round-robin", "random", "weighted", "first-only"
+  a_ttl: number;
+  srv_ttl: number;
+  custom_domain?: string;
+  instance_weights?: Record<string, number>;
+}
+
+// 服务DNS设置响应
+export interface ServiceDNSSettingsResponse {
+  success: boolean;
+  service_name: string;
+  settings: ServiceDNSSettings;
+  message?: string;
+  timestamp: string;
+}
+
 export interface ServiceListResponse {
   success: boolean;
   services: string[];
@@ -121,6 +160,28 @@ export const serviceApi = {
   // 获取服务详情
   getServiceDetail: (serviceName: string, instanceId: string) => 
     apiClient.get<any, ServiceDetailResponse>(`/admin/services/${serviceName}/${instanceId}`),
+    
+  // 获取服务关联的DNS记录
+  getServiceDNSAssociations: (serviceName: string) => 
+    apiClient.get<any, ServiceDNSAssociationResponse>(`/admin/services/${serviceName}/dns`),
+    
+  // 关联DNS记录到服务
+  associateDNSWithService: (serviceName: string, domain: string, recordType: string) => 
+    apiClient.post<any, any>(`/admin/services/${serviceName}/dns`, { 
+      domain, record_type: recordType 
+    }),
+    
+  // 解除DNS记录与服务的关联
+  disassociateDNSFromService: (serviceName: string, domain: string, recordType: string) => 
+    apiClient.delete<any, any>(`/admin/services/${serviceName}/dns/${domain}/${recordType}`),
+    
+  // 获取服务DNS设置
+  getServiceDNSSettings: (serviceName: string) => 
+    apiClient.get<any, ServiceDNSSettingsResponse>(`/admin/services/${serviceName}/dns-settings`),
+    
+  // 更新服务DNS设置
+  updateServiceDNSSettings: (serviceName: string, settings: ServiceDNSSettings) => 
+    apiClient.put<any, any>(`/admin/services/${serviceName}/dns-settings`, settings),
 };
 
 // DNS配置API接口
@@ -148,6 +209,10 @@ export const dnsApi = {
   // 删除DNS记录
   deleteDNSRecord: (domain: string, type: string) => 
     apiClient.delete<any, DNSRecordResponse>(`/admin/dns/records/${domain}/${type}`),
+    
+  // 获取DNS记录关联的服务
+  getDNSServiceAssociations: (domain: string, recordType: string) => 
+    apiClient.get<any, DNSServiceAssociationResponse>(`/admin/dns/:${domain}/:${recordType}/services`),
 };
 
 export default apiClient; 

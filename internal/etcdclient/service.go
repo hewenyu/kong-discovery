@@ -559,3 +559,260 @@ func (e *EtcdClient) cleanupServiceDNSRecords(ctx context.Context, instance *Ser
 
 	return nil
 }
+
+// 以下是新增的服务-DNS关联关系管理方法实现
+
+// getServiceDNSSettingsKey 生成服务DNS设置在etcd中的键
+func getServiceDNSSettingsKey(serviceName string) string {
+	return fmt.Sprintf("/services-dns-settings/%s", serviceName)
+}
+
+// getServiceDNSAssociationKey 生成服务-DNS关联关系在etcd中的键
+func getServiceDNSAssociationKey(serviceName, domain, recordType string) string {
+	return fmt.Sprintf("/service-dns-associations/%s/%s/%s", serviceName, domain, recordType)
+}
+
+// getDNSServiceAssociationKey 生成DNS-服务关联关系在etcd中的键前缀
+func getDNSServiceAssociationPrefix(domain, recordType string) string {
+	return fmt.Sprintf("/dns-service-associations/%s/%s/", domain, recordType)
+}
+
+// getServiceDNSAssociationPrefix 生成服务-DNS关联关系在etcd中的键前缀
+func getServiceDNSAssociationPrefix(serviceName string) string {
+	return fmt.Sprintf("/service-dns-associations/%s/", serviceName)
+}
+
+// 默认DNS设置
+var defaultServiceDNSSettings = &ServiceDNSSettings{
+	LoadBalancePolicy: "round-robin",
+	ATTL:              60,
+	SRVTTL:            60,
+}
+
+// AssociateDNSWithService 将DNS记录关联到服务
+func (e *EtcdClient) AssociateDNSWithService(ctx context.Context, serviceName string, domain string, recordType string) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 检查服务是否存在
+	instances, err := e.GetServiceInstances(ctx, serviceName)
+	if err != nil || len(instances) == 0 {
+		return fmt.Errorf("服务不存在或获取服务实例失败: %w", err)
+	}
+
+	// 检查DNS记录是否存在
+	record, err := e.GetDNSRecord(ctx, domain, recordType)
+	if err != nil || record == nil {
+		// 如果DNS记录不存在，则自动创建
+		if recordType == "A" {
+			// 对于A记录，使用第一个实例的IP
+			record = &DNSRecord{
+				Type:  "A",
+				Value: instances[0].IPAddress,
+				TTL:   60,
+			}
+			if err := e.PutDNSRecord(ctx, domain, record); err != nil {
+				return fmt.Errorf("创建A记录失败: %w", err)
+			}
+		} else if recordType == "SRV" {
+			// 对于SRV记录，使用第一个实例的端口和IP
+			instance := instances[0]
+			targetDomain := domain
+			if !strings.HasSuffix(targetDomain, ".") {
+				targetDomain = targetDomain + "."
+			}
+			srvValue := fmt.Sprintf("10 10 %d %s", instance.Port, targetDomain)
+			record = &DNSRecord{
+				Type:  "SRV",
+				Value: srvValue,
+				TTL:   60,
+			}
+			if err := e.PutDNSRecord(ctx, domain, record); err != nil {
+				return fmt.Errorf("创建SRV记录失败: %w", err)
+			}
+		} else {
+			return fmt.Errorf("DNS记录不存在且不支持自动创建类型 %s", recordType)
+		}
+	}
+
+	// 创建关联关系
+	associationKey := getServiceDNSAssociationKey(serviceName, domain, recordType)
+	_, err = e.client.Put(ctx, associationKey, "true")
+	if err != nil {
+		return fmt.Errorf("创建服务-DNS关联关系失败: %w", err)
+	}
+
+	// 创建反向关联关系
+	dnsServiceAssociationKey := fmt.Sprintf("%s%s", getDNSServiceAssociationPrefix(domain, recordType), serviceName)
+	_, err = e.client.Put(ctx, dnsServiceAssociationKey, "true")
+	if err != nil {
+		e.logger.Warn("创建DNS-服务反向关联关系失败",
+			zap.String("key", dnsServiceAssociationKey),
+			zap.Error(err))
+		// 不因为反向关联创建失败而阻止操作
+	}
+
+	e.logger.Info("成功关联DNS记录到服务",
+		zap.String("service", serviceName),
+		zap.String("domain", domain),
+		zap.String("record_type", recordType))
+
+	return nil
+}
+
+// DisassociateDNSFromService 解除DNS记录与服务的关联
+func (e *EtcdClient) DisassociateDNSFromService(ctx context.Context, serviceName string, domain string, recordType string) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 删除关联关系
+	associationKey := getServiceDNSAssociationKey(serviceName, domain, recordType)
+	_, err := e.client.Delete(ctx, associationKey)
+	if err != nil {
+		return fmt.Errorf("删除服务-DNS关联关系失败: %w", err)
+	}
+
+	// 删除反向关联关系
+	dnsServiceAssociationKey := fmt.Sprintf("%s%s", getDNSServiceAssociationPrefix(domain, recordType), serviceName)
+	_, err = e.client.Delete(ctx, dnsServiceAssociationKey)
+	if err != nil {
+		e.logger.Warn("删除DNS-服务反向关联关系失败",
+			zap.String("key", dnsServiceAssociationKey),
+			zap.Error(err))
+		// 不因为反向关联删除失败而阻止操作
+	}
+
+	e.logger.Info("成功解除DNS记录与服务的关联",
+		zap.String("service", serviceName),
+		zap.String("domain", domain),
+		zap.String("record_type", recordType))
+
+	return nil
+}
+
+// GetServiceDNSAssociations 获取服务关联的所有DNS记录
+func (e *EtcdClient) GetServiceDNSAssociations(ctx context.Context, serviceName string) (map[string][]string, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	prefix := getServiceDNSAssociationPrefix(serviceName)
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("获取服务DNS关联关系失败: %w", err)
+	}
+
+	// 域名 -> 记录类型列表
+	associations := make(map[string][]string)
+
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// 格式: /service-dns-associations/{serviceName}/{domain}/{recordType}
+		parts := strings.Split(key, "/")
+		if len(parts) >= 5 {
+			domain := parts[3]
+			recordType := parts[4]
+
+			if _, ok := associations[domain]; !ok {
+				associations[domain] = make([]string, 0)
+			}
+			associations[domain] = append(associations[domain], recordType)
+		}
+	}
+
+	return associations, nil
+}
+
+// GetDNSServiceAssociations 获取DNS记录关联的所有服务
+func (e *EtcdClient) GetDNSServiceAssociations(ctx context.Context, domain string, recordType string) ([]string, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	prefix := getDNSServiceAssociationPrefix(domain, recordType)
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("获取DNS服务关联关系失败: %w", err)
+	}
+
+	services := make([]string, 0, len(resp.Kvs))
+
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// 格式: /dns-service-associations/{domain}/{recordType}/{serviceName}
+		parts := strings.Split(key, "/")
+		if len(parts) >= 5 {
+			serviceName := parts[4]
+			services = append(services, serviceName)
+		}
+	}
+
+	return services, nil
+}
+
+// UpdateServiceDNSSettings 更新服务的DNS设置
+func (e *EtcdClient) UpdateServiceDNSSettings(ctx context.Context, serviceName string, settings *ServiceDNSSettings) error {
+	if e.client == nil {
+		return fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 检查服务是否存在
+	_, err := e.GetServiceInstances(ctx, serviceName)
+	if err != nil {
+		return fmt.Errorf("获取服务实例失败: %w", err)
+	}
+
+	// 序列化设置
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("序列化DNS设置失败: %w", err)
+	}
+
+	// 存储设置
+	key := getServiceDNSSettingsKey(serviceName)
+	_, err = e.client.Put(ctx, key, string(data))
+	if err != nil {
+		return fmt.Errorf("存储DNS设置失败: %w", err)
+	}
+
+	e.logger.Info("更新服务DNS设置成功",
+		zap.String("service", serviceName),
+		zap.Any("settings", settings))
+
+	return nil
+}
+
+// GetServiceDNSSettings 获取服务的DNS设置
+func (e *EtcdClient) GetServiceDNSSettings(ctx context.Context, serviceName string) (*ServiceDNSSettings, error) {
+	if e.client == nil {
+		return nil, fmt.Errorf("etcd客户端未连接")
+	}
+
+	// 从etcd获取设置
+	key := getServiceDNSSettingsKey(serviceName)
+	resp, err := e.client.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("获取DNS设置失败: %w", err)
+	}
+
+	// 如果设置不存在，返回默认设置
+	if len(resp.Kvs) == 0 {
+		// 创建默认设置
+		defaultSettings := &ServiceDNSSettings{
+			LoadBalancePolicy: "round-robin",
+			ATTL:              60,
+			SRVTTL:            60,
+		}
+		return defaultSettings, nil
+	}
+
+	// 解析设置
+	var settings ServiceDNSSettings
+	if err := json.Unmarshal(resp.Kvs[0].Value, &settings); err != nil {
+		return nil, fmt.Errorf("解析DNS设置失败: %w", err)
+	}
+
+	return &settings, nil
+}

@@ -166,6 +166,16 @@ func (h *EchoHandler) registerManagementRoutes() {
 	h.managementServer.GET("/admin/dns/records/:domain", h.getDNSRecordsHandler)
 	h.managementServer.POST("/admin/dns/records", h.createDNSRecordHandler)
 	h.managementServer.DELETE("/admin/dns/records/:domain/:type", h.deleteDNSRecordHandler)
+
+	// 服务-DNS关联关系管理相关端点
+	h.managementServer.GET("/admin/services/:serviceName/dns", h.getServiceDNSAssociationsHandler)
+	h.managementServer.POST("/admin/services/:serviceName/dns", h.associateDNSWithServiceHandler)
+	h.managementServer.DELETE("/admin/services/:serviceName/dns/:domain/:type", h.disassociateDNSFromServiceHandler)
+	h.managementServer.GET("/admin/dns/:domain/:type/services", h.getDNSServiceAssociationsHandler)
+
+	// 服务DNS设置管理相关端点
+	h.managementServer.GET("/admin/services/:serviceName/dns-settings", h.getServiceDNSSettingsHandler)
+	h.managementServer.PUT("/admin/services/:serviceName/dns-settings", h.updateServiceDNSSettingsHandler)
 }
 
 // registerRegistrationRoutes 注册服务注册API路由
@@ -909,5 +919,337 @@ func (h *EchoHandler) getAllServiceInstancesHandler(c echo.Context) error {
 		Instances: allInstances,
 		Count:     len(allInstances),
 		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// ServiceDNSAssociationResponse 服务-DNS关联关系响应
+type ServiceDNSAssociationResponse struct {
+	Success      bool                `json:"success"`           // 是否成功
+	ServiceName  string              `json:"service_name"`      // 服务名称
+	Associations map[string][]string `json:"associations"`      // 域名 -> 记录类型列表
+	Message      string              `json:"message,omitempty"` // 可选消息
+	Count        int                 `json:"count"`             // 关联数量
+	Timestamp    string              `json:"timestamp"`         // 时间戳
+}
+
+// DNSServiceAssociationResponse DNS-服务关联关系响应
+type DNSServiceAssociationResponse struct {
+	Success    bool     `json:"success"`           // 是否成功
+	Domain     string   `json:"domain"`            // 域名
+	RecordType string   `json:"record_type"`       // 记录类型
+	Services   []string `json:"services"`          // 服务名称列表
+	Message    string   `json:"message,omitempty"` // 可选消息
+	Count      int      `json:"count"`             // 服务数量
+	Timestamp  string   `json:"timestamp"`         // 时间戳
+}
+
+// AssociateDNSRequest 关联DNS记录请求
+type AssociateDNSRequest struct {
+	Domain     string `json:"domain" validate:"required"`      // 域名
+	RecordType string `json:"record_type" validate:"required"` // 记录类型
+}
+
+// ServiceDNSSettingsResponse 服务DNS设置响应
+type ServiceDNSSettingsResponse struct {
+	Success     bool                           `json:"success"`           // 是否成功
+	ServiceName string                         `json:"service_name"`      // 服务名称
+	Settings    *etcdclient.ServiceDNSSettings `json:"settings"`          // DNS设置
+	Message     string                         `json:"message,omitempty"` // 可选消息
+	Timestamp   string                         `json:"timestamp"`         // 时间戳
+}
+
+// getServiceDNSAssociationsHandler 获取服务关联的DNS记录
+func (h *EchoHandler) getServiceDNSAssociationsHandler(c echo.Context) error {
+	serviceName := c.Param("serviceName")
+	if serviceName == "" {
+		return c.JSON(http.StatusBadRequest, &ServiceDNSAssociationResponse{
+			Success:   false,
+			Message:   "服务名称不能为空",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证服务是否存在
+	ctx := c.Request().Context()
+	_, err := h.etcdClient.GetServiceInstances(ctx, serviceName)
+	if err != nil {
+		h.logger.Error("获取服务实例失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusNotFound, &ServiceDNSAssociationResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			Message:     "服务不存在或无法获取实例: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 获取服务关联的DNS记录
+	associations, err := h.etcdClient.GetServiceDNSAssociations(ctx, serviceName)
+	if err != nil {
+		h.logger.Error("获取服务DNS关联关系失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceDNSAssociationResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			Message:     "获取服务DNS关联关系失败: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 统计关联数量
+	count := 0
+	for _, types := range associations {
+		count += len(types)
+	}
+
+	return c.JSON(http.StatusOK, &ServiceDNSAssociationResponse{
+		Success:      true,
+		ServiceName:  serviceName,
+		Associations: associations,
+		Count:        count,
+		Timestamp:    time.Now().Format(time.RFC3339),
+	})
+}
+
+// associateDNSWithServiceHandler 关联DNS记录到服务
+func (h *EchoHandler) associateDNSWithServiceHandler(c echo.Context) error {
+	serviceName := c.Param("serviceName")
+	if serviceName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "服务名称不能为空",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 解析请求
+	req := new(AssociateDNSRequest)
+	if err := c.Bind(req); err != nil {
+		h.logger.Error("解析关联DNS请求失败", zap.Error(err))
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "请求格式错误: " + err.Error(),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证请求
+	if req.Domain == "" || req.RecordType == "" {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "域名和记录类型不能为空",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 关联DNS记录
+	ctx := c.Request().Context()
+	err := h.etcdClient.AssociateDNSWithService(ctx, serviceName, req.Domain, req.RecordType)
+	if err != nil {
+		h.logger.Error("关联DNS记录失败",
+			zap.String("service", serviceName),
+			zap.String("domain", req.Domain),
+			zap.String("record_type", req.RecordType),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success":   false,
+			"message":   "关联DNS记录失败: " + err.Error(),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"success":      true,
+		"service_name": serviceName,
+		"domain":       req.Domain,
+		"record_type":  req.RecordType,
+		"message":      "成功关联DNS记录到服务",
+		"timestamp":    time.Now().Format(time.RFC3339),
+	})
+}
+
+// disassociateDNSFromServiceHandler 解除DNS记录与服务的关联
+func (h *EchoHandler) disassociateDNSFromServiceHandler(c echo.Context) error {
+	serviceName := c.Param("serviceName")
+	domain := c.Param("domain")
+	recordType := c.Param("type")
+
+	if serviceName == "" || domain == "" || recordType == "" {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "服务名称、域名和记录类型不能为空",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 解除关联
+	ctx := c.Request().Context()
+	err := h.etcdClient.DisassociateDNSFromService(ctx, serviceName, domain, recordType)
+	if err != nil {
+		h.logger.Error("解除DNS记录关联失败",
+			zap.String("service", serviceName),
+			zap.String("domain", domain),
+			zap.String("record_type", recordType),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success":   false,
+			"message":   "解除DNS记录关联失败: " + err.Error(),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"success":      true,
+		"service_name": serviceName,
+		"domain":       domain,
+		"record_type":  recordType,
+		"message":      "成功解除DNS记录与服务的关联",
+		"timestamp":    time.Now().Format(time.RFC3339),
+	})
+}
+
+// getDNSServiceAssociationsHandler 获取DNS记录关联的服务
+func (h *EchoHandler) getDNSServiceAssociationsHandler(c echo.Context) error {
+	domain := c.Param("domain")
+	recordType := c.Param("type")
+
+	if domain == "" || recordType == "" {
+		return c.JSON(http.StatusBadRequest, &DNSServiceAssociationResponse{
+			Success:   false,
+			Message:   "域名和记录类型不能为空",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 获取DNS记录关联的服务
+	ctx := c.Request().Context()
+	services, err := h.etcdClient.GetDNSServiceAssociations(ctx, domain, recordType)
+	if err != nil {
+		h.logger.Error("获取DNS服务关联关系失败",
+			zap.String("domain", domain),
+			zap.String("record_type", recordType),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &DNSServiceAssociationResponse{
+			Success:    false,
+			Domain:     domain,
+			RecordType: recordType,
+			Message:    "获取DNS服务关联关系失败: " + err.Error(),
+			Timestamp:  time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, &DNSServiceAssociationResponse{
+		Success:    true,
+		Domain:     domain,
+		RecordType: recordType,
+		Services:   services,
+		Count:      len(services),
+		Timestamp:  time.Now().Format(time.RFC3339),
+	})
+}
+
+// getServiceDNSSettingsHandler 获取服务DNS设置
+func (h *EchoHandler) getServiceDNSSettingsHandler(c echo.Context) error {
+	serviceName := c.Param("serviceName")
+	if serviceName == "" {
+		return c.JSON(http.StatusBadRequest, &ServiceDNSSettingsResponse{
+			Success:   false,
+			Message:   "服务名称不能为空",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证服务是否存在
+	ctx := c.Request().Context()
+	_, err := h.etcdClient.GetServiceInstances(ctx, serviceName)
+	if err != nil {
+		h.logger.Error("获取服务实例失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusNotFound, &ServiceDNSSettingsResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			Message:     "服务不存在或无法获取实例: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 获取服务DNS设置
+	settings, err := h.etcdClient.GetServiceDNSSettings(ctx, serviceName)
+	if err != nil {
+		h.logger.Error("获取服务DNS设置失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceDNSSettingsResponse{
+			Success:     false,
+			ServiceName: serviceName,
+			Message:     "获取服务DNS设置失败: " + err.Error(),
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, &ServiceDNSSettingsResponse{
+		Success:     true,
+		ServiceName: serviceName,
+		Settings:    settings,
+		Timestamp:   time.Now().Format(time.RFC3339),
+	})
+}
+
+// updateServiceDNSSettingsHandler 更新服务DNS设置
+func (h *EchoHandler) updateServiceDNSSettingsHandler(c echo.Context) error {
+	serviceName := c.Param("serviceName")
+	if serviceName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "服务名称不能为空",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 解析请求
+	settings := new(etcdclient.ServiceDNSSettings)
+	if err := c.Bind(settings); err != nil {
+		h.logger.Error("解析DNS设置请求失败", zap.Error(err))
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":   false,
+			"message":   "请求格式错误: " + err.Error(),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 验证设置
+	if settings.LoadBalancePolicy == "" {
+		settings.LoadBalancePolicy = "round-robin" // 默认为轮询
+	}
+	if settings.ATTL <= 0 {
+		settings.ATTL = 60 // 默认60秒
+	}
+	if settings.SRVTTL <= 0 {
+		settings.SRVTTL = 60 // 默认60秒
+	}
+
+	// 更新服务DNS设置
+	ctx := c.Request().Context()
+	err := h.etcdClient.UpdateServiceDNSSettings(ctx, serviceName, settings)
+	if err != nil {
+		h.logger.Error("更新服务DNS设置失败",
+			zap.String("service", serviceName),
+			zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success":   false,
+			"message":   "更新服务DNS设置失败: " + err.Error(),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"success":      true,
+		"service_name": serviceName,
+		"settings":     settings,
+		"message":      "成功更新服务DNS设置",
+		"timestamp":    time.Now().Format(time.RFC3339),
 	})
 }
