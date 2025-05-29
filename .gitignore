@@ -34,3 +34,5 @@ git.md
 kong-discovery
 
 .venv
+configs/config.test.yaml
+discovery

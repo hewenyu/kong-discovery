@@ -12,7 +12,7 @@ import (
 
 func TestMemoryServiceStorage_RegisterService(t *testing.T) {
 	// 创建存储实例
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 创建测试服务
@@ -48,7 +48,7 @@ func TestMemoryServiceStorage_RegisterService(t *testing.T) {
 }
 
 func TestMemoryServiceStorage_DeregisterService(t *testing.T) {
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 注册一个服务
@@ -78,7 +78,7 @@ func TestMemoryServiceStorage_DeregisterService(t *testing.T) {
 }
 
 func TestMemoryServiceStorage_GetService(t *testing.T) {
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 注册一个服务
@@ -102,7 +102,7 @@ func TestMemoryServiceStorage_GetService(t *testing.T) {
 }
 
 func TestMemoryServiceStorage_ListServices(t *testing.T) {
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 注册多个服务
@@ -133,7 +133,7 @@ func TestMemoryServiceStorage_ListServices(t *testing.T) {
 }
 
 func TestMemoryServiceStorage_UpdateServiceHeartbeat(t *testing.T) {
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 注册一个服务
@@ -169,7 +169,7 @@ func TestMemoryServiceStorage_UpdateServiceHeartbeat(t *testing.T) {
 }
 
 func TestMemoryServiceStorage_CleanupStaleServices(t *testing.T) {
-	s := NewServiceStorage()
+	s := NewMemoryStorage()
 	ctx := context.Background()
 
 	// 注册服务
@@ -188,9 +188,9 @@ func TestMemoryServiceStorage_CleanupStaleServices(t *testing.T) {
 	require.NoError(t, err)
 
 	// 直接修改内存中的对象
-	s.mu.Lock()
+	s.mutex.Lock()
 	s.services["service-stale-1"].LastHeartbeat = time.Now().Add(-2 * time.Minute)
-	s.mu.Unlock()
+	s.mutex.Unlock()
 
 	// 清理过期服务（超时设置为1分钟）
 	err = s.CleanupStaleServices(ctx, 1*time.Minute)

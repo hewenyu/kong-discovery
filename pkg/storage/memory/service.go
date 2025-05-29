@@ -2,99 +2,92 @@ package memory
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/hewenyu/kong-discovery/pkg/storage"
 )
 
-// ServiceStorage 实现基于内存的服务存储，用于测试
-type ServiceStorage struct {
+// MemoryStorage 是基于内存的服务存储实现，主要用于测试
+type MemoryStorage struct {
 	services map[string]*storage.Service
-	mu       sync.RWMutex
+	mutex    sync.RWMutex
 }
 
-// NewServiceStorage 创建内存服务存储
-func NewServiceStorage() *ServiceStorage {
-	return &ServiceStorage{
+// NewMemoryStorage 创建新的内存存储
+func NewMemoryStorage() *MemoryStorage {
+	return &MemoryStorage{
 		services: make(map[string]*storage.Service),
 	}
 }
 
 // RegisterService 注册服务实例
-func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.Service) error {
+func (m *MemoryStorage) RegisterService(ctx context.Context, service *storage.Service) error {
 	if service.ID == "" || service.Name == "" || service.IP == "" || service.Port <= 0 {
 		return storage.NewInvalidArgumentError("服务ID、名称、IP和端口不能为空")
 	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
 	// 设置注册时间和最后心跳时间
 	now := time.Now()
 	if service.RegisteredAt.IsZero() {
 		service.RegisteredAt = now
 	}
-
-	// 只有在LastHeartbeat为零值时才设置为当前时间
-	// 这允许调用者提供自定义的心跳时间
 	if service.LastHeartbeat.IsZero() {
 		service.LastHeartbeat = now
 	}
-
-	// 如果未设置健康状态，默认为健康
 	if service.Health == "" {
 		service.Health = "healthy"
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 存储服务
-	s.services[service.ID] = service
-
+	// 保存服务
+	m.services[service.ID] = service
 	return nil
 }
 
 // DeregisterService 注销服务实例
-func (s *ServiceStorage) DeregisterService(ctx context.Context, serviceID string) error {
+func (m *MemoryStorage) DeregisterService(ctx context.Context, serviceID string) error {
 	if serviceID == "" {
 		return storage.NewInvalidArgumentError("服务ID不能为空")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	if _, exists := s.services[serviceID]; !exists {
-		return storage.NewNotFoundError(fmt.Sprintf("服务不存在: %s", serviceID))
+	if _, exists := m.services[serviceID]; !exists {
+		return storage.NewNotFoundError("服务不存在: " + serviceID)
 	}
 
-	delete(s.services, serviceID)
+	delete(m.services, serviceID)
 	return nil
 }
 
 // GetService 获取服务实例详情
-func (s *ServiceStorage) GetService(ctx context.Context, serviceID string) (*storage.Service, error) {
+func (m *MemoryStorage) GetService(ctx context.Context, serviceID string) (*storage.Service, error) {
 	if serviceID == "" {
 		return nil, storage.NewInvalidArgumentError("服务ID不能为空")
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 
-	service, exists := s.services[serviceID]
+	service, exists := m.services[serviceID]
 	if !exists {
-		return nil, storage.NewNotFoundError(fmt.Sprintf("服务不存在: %s", serviceID))
+		return nil, storage.NewNotFoundError("服务不存在: " + serviceID)
 	}
 
 	return service, nil
 }
 
 // ListServices 获取所有服务实例列表
-func (s *ServiceStorage) ListServices(ctx context.Context) ([]*storage.Service, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (m *MemoryStorage) ListServices(ctx context.Context) ([]*storage.Service, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 
-	services := make([]*storage.Service, 0, len(s.services))
-	for _, service := range s.services {
+	services := make([]*storage.Service, 0, len(m.services))
+	for _, service := range m.services {
 		services = append(services, service)
 	}
 
@@ -102,36 +95,36 @@ func (s *ServiceStorage) ListServices(ctx context.Context) ([]*storage.Service, 
 }
 
 // ListServicesByName 获取指定名称的服务实例列表
-func (s *ServiceStorage) ListServicesByName(ctx context.Context, serviceName string) ([]*storage.Service, error) {
+func (m *MemoryStorage) ListServicesByName(ctx context.Context, serviceName string) ([]*storage.Service, error) {
 	if serviceName == "" {
 		return nil, storage.NewInvalidArgumentError("服务名称不能为空")
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 
-	result := make([]*storage.Service, 0)
-	for _, service := range s.services {
+	var services []*storage.Service
+	for _, service := range m.services {
 		if service.Name == serviceName {
-			result = append(result, service)
+			services = append(services, service)
 		}
 	}
 
-	return result, nil
+	return services, nil
 }
 
 // UpdateServiceHeartbeat 更新服务心跳时间
-func (s *ServiceStorage) UpdateServiceHeartbeat(ctx context.Context, serviceID string) error {
+func (m *MemoryStorage) UpdateServiceHeartbeat(ctx context.Context, serviceID string) error {
 	if serviceID == "" {
 		return storage.NewInvalidArgumentError("服务ID不能为空")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	service, exists := s.services[serviceID]
+	service, exists := m.services[serviceID]
 	if !exists {
-		return storage.NewNotFoundError(fmt.Sprintf("服务不存在: %s", serviceID))
+		return storage.NewNotFoundError("服务不存在: " + serviceID)
 	}
 
 	service.LastHeartbeat = time.Now()
@@ -139,23 +132,21 @@ func (s *ServiceStorage) UpdateServiceHeartbeat(ctx context.Context, serviceID s
 }
 
 // CleanupStaleServices 清理过期的服务实例
-func (s *ServiceStorage) CleanupStaleServices(ctx context.Context, timeout time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (m *MemoryStorage) CleanupStaleServices(ctx context.Context, timeout time.Duration) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
 	now := time.Now()
-	staleIDs := make([]string, 0)
+	staleServices := make([]string, 0)
 
-	// 找出所有过期的服务
-	for id, service := range s.services {
+	for id, service := range m.services {
 		if now.Sub(service.LastHeartbeat) > timeout {
-			staleIDs = append(staleIDs, id)
+			staleServices = append(staleServices, id)
 		}
 	}
 
-	// 删除过期服务
-	for _, id := range staleIDs {
-		delete(s.services, id)
+	for _, id := range staleServices {
+		delete(m.services, id)
 	}
 
 	return nil
