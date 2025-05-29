@@ -55,10 +55,23 @@ const Services: React.FC = () => {
       setLoading(true);
       setError(null);
       const response = await serviceApi.getServices();
-      setServices(response.data.data.services);
+      
+      // 检查API响应格式并进行处理
+      if (response.data && response.data.data && Array.isArray(response.data.data.services)) {
+        const services = response.data.data.services;
+        setServices(services);
+      } else if (response.data && response.data.data && Array.isArray(response.data.data)) {
+        const services = response.data.data;
+        setServices(services);
+      } else {
+        console.error('无法识别的服务数据格式:', response.data);
+        setError('无法识别的服务数据格式');
+        setServices([]);
+      }
     } catch (err) {
       console.error('获取服务列表失败:', err);
       setError('获取服务列表失败，请检查网络连接或服务器状态');
+      setServices([]);
     } finally {
       setLoading(false);
     }
@@ -161,6 +174,39 @@ const Services: React.FC = () => {
     }
   };
 
+  // 格式化日期的辅助函数
+  const formatDateTime = (dateString: string | undefined): string => {
+    if (!dateString) return '未知';
+    console.log('格式化日期:', dateString);
+    
+    // 使用简单的拆分方法处理ISO日期字符串
+    if (typeof dateString === 'string' && dateString.includes('T')) {
+      try {
+        const parts = dateString.split('T');
+        const datePart = parts[0]; // 例如：2025-05-29
+        
+        // 从时间部分提取时、分、秒
+        let timePart = parts[1];
+        if (timePart.includes('+')) {
+          timePart = timePart.split('+')[0];
+        } else if (timePart.includes('-') && timePart.indexOf('-') > 2) {
+          timePart = timePart.split('-')[0];
+        }
+        
+        if (timePart.includes('.')) {
+          timePart = timePart.split('.')[0];
+        }
+        
+        return `${datePart} ${timePart}`;
+      } catch (e) {
+        console.error('简单日期拆分失败:', e);
+      }
+    }
+    
+    // 如果简单拆分失败，返回原始字符串
+    return dateString;
+  };
+
   // 表格列定义
   const columns: GridColDef[] = [
     { field: 'name', headerName: '服务名称', flex: 1 },
@@ -194,7 +240,12 @@ const Services: React.FC = () => {
       field: 'registered_at',
       headerName: '注册时间',
       flex: 1,
-      valueFormatter: (params: any) => new Date(params.value).toLocaleString()
+      renderCell: (params: GridRenderCellParams<Service>) => {
+        console.log('渲染单元格的日期值:', params.value);
+        const formattedDate = formatDateTime(params.value);
+        console.log('单元格格式化结果:', formattedDate);
+        return <span>{formattedDate}</span>;
+      }
     },
     {
       field: 'actions',
@@ -251,17 +302,87 @@ const Services: React.FC = () => {
         </Alert>
       )}
 
-      <Paper sx={{ height: 500, width: '100%' }}>
-        <DataGrid
-          rows={services}
-          columns={columns}
-          loading={loading}
-          pageSizeOptions={[10, 25, 50]}
-          initialState={{
-            pagination: { paginationModel: { pageSize: 10 } },
-          }}
-          disableRowSelectionOnClick
-        />
+      <Paper sx={{ height: 500, width: '100%', p: 2, overflow: 'auto' }}>
+        {services.length > 0 ? (
+          <>
+            {/* <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle1" gutterBottom>
+                调试信息:
+              </Typography>
+              <Typography variant="body2">
+                原始日期: {services[0].registered_at}
+              </Typography>
+              <Typography variant="body2">
+                格式化日期: {formatDateTime(services[0].registered_at)}
+              </Typography>
+            </Box> */}
+            
+            {/* 使用原生表格代替DataGrid */}
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>服务名称</th>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>IP地址</th>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>端口</th>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>健康状态</th>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>注册时间</th>
+                  <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {services.map((service) => (
+                  <tr key={service.id}>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.name}</td>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.ip}</td>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>{service.port}</td>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
+                      <Chip 
+                        label={service.health} 
+                        color={service.health === 'healthy' ? 'success' : 'error'} 
+                        size="small"
+                      />
+                    </td>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
+                      {service.registered_at ? 
+                        (() => {
+                          // 简单拆分日期字符串
+                          if (service.registered_at.includes('T')) {
+                            const [datePart, timePart] = service.registered_at.split('T');
+                            const time = timePart.split('.')[0];
+                            return `${datePart} ${time}`;
+                          }
+                          return service.registered_at;
+                        })() : '未知'}
+                    </td>
+                    <td style={{ padding: '8px', borderBottom: '1px solid #ddd' }}>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleViewService(service.id)}
+                        title="查看详情"
+                      >
+                        <VisibilityIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleDeregisterService(service.id)}
+                        title="注销服务"
+                        color="error"
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <Box sx={{ textAlign: 'center', p: 3 }}>
+            <Typography variant="body1" color="text.secondary">
+              {loading ? '加载中...' : '没有服务数据'}
+            </Typography>
+          </Box>
+        )}
       </Paper>
 
       {/* 注册服务对话框 */}
@@ -455,13 +576,31 @@ const Services: React.FC = () => {
               <Box>
                 <Typography variant="subtitle2">注册时间</Typography>
                 <Typography variant="body1">
-                  {new Date(selectedService.registered_at).toLocaleString()}
+                  {selectedService.registered_at ? 
+                    (() => {
+                      // 简单拆分日期字符串
+                      if (selectedService.registered_at.includes('T')) {
+                        const [datePart, timePart] = selectedService.registered_at.split('T');
+                        const time = timePart.split('.')[0];
+                        return `${datePart} ${time}`;
+                      }
+                      return selectedService.registered_at;
+                    })() : '未知'}
                 </Typography>
               </Box>
               <Box>
                 <Typography variant="subtitle2">最后心跳时间</Typography>
                 <Typography variant="body1">
-                  {new Date(selectedService.last_heartbeat).toLocaleString()}
+                  {selectedService.last_heartbeat ? 
+                    (() => {
+                      // 简单拆分日期字符串
+                      if (selectedService.last_heartbeat.includes('T')) {
+                        const [datePart, timePart] = selectedService.last_heartbeat.split('T');
+                        const time = timePart.split('.')[0];
+                        return `${datePart} ${time}`;
+                      }
+                      return selectedService.last_heartbeat;
+                    })() : '未知'}
                 </Typography>
               </Box>
               <Box sx={{ gridColumn: '1 / -1' }}>
