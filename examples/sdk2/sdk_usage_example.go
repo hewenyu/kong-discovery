@@ -157,18 +157,6 @@ func registerServiceExample(ctx context.Context) error {
 			return
 		}
 		fmt.Printf("服务注销成功: %+v\n", deregisterResp)
-
-		// 删除DNS记录
-		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer delCancel()
-
-		fmt.Printf("正在删除DNS记录: %s\n", ServiceDomain)
-		delResp, err := client.DeleteDNSRecord(delCtx, ServiceDomain, "A")
-		if err != nil {
-			fmt.Printf("删除DNS记录失败: %v\n", err)
-		} else {
-			fmt.Printf("DNS记录删除成功: %+v\n", delResp)
-		}
 	}()
 
 	return nil
