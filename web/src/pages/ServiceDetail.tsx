@@ -189,7 +189,7 @@ const ServiceDetail: React.FC = () => {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Grid container spacing={2}>
-            <Grid xs={12} md={6}>
+            <Grid size={{ xs: 12,md: 6}}>
               <Typography variant="h5" gutterBottom>{service.name}</Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
                 ID: {service.id}
@@ -201,7 +201,7 @@ const ServiceDetail: React.FC = () => {
               </Box>
             </Grid>
 
-            <Grid xs={12} md={6}>
+            <Grid size={{ xs: 12 , md: 6}}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="body2" color="text.secondary">IP地址</Typography>
                 <Typography variant="body1">{service.ip}</Typography>
@@ -250,7 +250,7 @@ const ServiceDetail: React.FC = () => {
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Grid container spacing={2}>
                   {Object.entries(service.metadata).map(([key, value]) => (
-                    <Grid xs={12} sm={6} md={4} key={key}>
+                    <Grid size={{ xs: 12, sm: 6, md: 4 }} key={key}>
                       <Box>
                         <Typography variant="caption" color="text.secondary">{key}</Typography>
                         <Typography variant="body2">{value}</Typography>
