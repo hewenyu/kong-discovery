@@ -456,3 +456,153 @@ func TestEtcdClient_UpdateDNSConfig(t *testing.T) {
 	_, _ = etcdClientImpl.Client().Delete(ctx, "/config/dns/"+testStringKey)
 	_, _ = etcdClientImpl.Client().Delete(ctx, "/config/dns/test_struct_config")
 }
+
+func TestEtcdClient_GetAllDNSDomains(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 创建配置和日志记录器
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建etcd客户端并连接
+	client := NewEtcdClient(cfg, logger)
+	err := client.Connect()
+	require.NoError(t, err, "连接etcd应该成功")
+
+	// 确保在测试结束时关闭连接
+	defer func() {
+		err := client.Close()
+		assert.NoError(t, err, "关闭etcd连接应该成功")
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 创建测试DNS记录，使用多个不同的域名
+	testDomains := []string{
+		"test1.example.com",
+		"test2.example.com",
+		"test3.example.com",
+	}
+
+	// 清理之前的测试数据
+	for _, domain := range testDomains {
+		_ = client.DeleteDNSRecord(ctx, domain, "A")
+	}
+
+	// 为每个域名创建一个A记录
+	for _, domain := range testDomains {
+		testRecord := &DNSRecord{
+			Type:  "A",
+			Value: "192.168.1.100",
+			TTL:   300,
+			Tags:  []string{"test", domain},
+		}
+
+		err = client.PutDNSRecord(ctx, domain, testRecord)
+		assert.NoError(t, err, "保存DNS记录应该成功")
+	}
+
+	// 测试GetAllDNSDomains
+	domains, err := client.GetAllDNSDomains(ctx)
+	assert.NoError(t, err, "获取所有DNS域名应该成功")
+
+	// 验证返回的域名列表包含我们刚才添加的所有域名
+	for _, domain := range testDomains {
+		assert.Contains(t, domains, domain, "域名列表应包含 "+domain)
+	}
+
+	// 清理测试数据
+	for _, domain := range testDomains {
+		err = client.DeleteDNSRecord(ctx, domain, "A")
+		assert.NoError(t, err, "删除DNS记录应该成功")
+	}
+}
+
+func TestEtcdClient_DeleteDNSRecord(t *testing.T) {
+	// 跳过集成测试，除非明确要求运行
+	if testing.Short() {
+		t.Skip("跳过集成测试")
+	}
+
+	// 创建配置和日志记录器
+	cfg := createTestConfig(t)
+	logger := createTestLogger(t)
+
+	// 创建etcd客户端并连接
+	client := NewEtcdClient(cfg, logger)
+	err := client.Connect()
+	require.NoError(t, err, "连接etcd应该成功")
+
+	// 确保在测试结束时关闭连接
+	defer func() {
+		err := client.Close()
+		assert.NoError(t, err, "关闭etcd连接应该成功")
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 创建测试DNS记录，多种类型
+	testDomain := "delete-test.example.com"
+	testRecordTypes := []string{"A", "AAAA", "CNAME", "TXT"}
+
+	// 清理之前的测试数据
+	for _, recordType := range testRecordTypes {
+		_ = client.DeleteDNSRecord(ctx, testDomain, recordType)
+	}
+
+	// 为每种记录类型创建一条记录
+	for _, recordType := range testRecordTypes {
+		var value string
+		switch recordType {
+		case "A":
+			value = "192.168.1.100"
+		case "AAAA":
+			value = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+		case "CNAME":
+			value = "target.example.com"
+		case "TXT":
+			value = "v=spf1 include:_spf.example.com ~all"
+		}
+
+		testRecord := &DNSRecord{
+			Type:  recordType,
+			Value: value,
+			TTL:   300,
+			Tags:  []string{"test", recordType},
+		}
+
+		err = client.PutDNSRecord(ctx, testDomain, testRecord)
+		assert.NoError(t, err, "保存DNS记录应该成功")
+	}
+
+	// 验证所有记录都已成功创建
+	records, err := client.GetDNSRecordsForDomain(ctx, testDomain)
+	assert.NoError(t, err, "获取域名的所有DNS记录应该成功")
+	assert.Equal(t, len(testRecordTypes), len(records), "应返回正确数量的记录")
+
+	// 测试DeleteDNSRecord - 逐一删除记录
+	for _, recordType := range testRecordTypes {
+		// 删除记录
+		err = client.DeleteDNSRecord(ctx, testDomain, recordType)
+		assert.NoError(t, err, "删除DNS记录应该成功")
+
+		// 验证记录已被删除
+		_, err = client.GetDNSRecord(ctx, testDomain, recordType)
+		assert.Error(t, err, "获取已删除的DNS记录应该失败")
+
+		// 验证其他记录不受影响
+		records, err = client.GetDNSRecordsForDomain(ctx, testDomain)
+		assert.NoError(t, err, "获取域名的所有DNS记录应该成功")
+		assert.NotContains(t, records, recordType, "已删除的记录类型不应在返回结果中")
+	}
+
+	// 最终确认所有记录都已删除
+	records, err = client.GetDNSRecordsForDomain(ctx, testDomain)
+	assert.NoError(t, err, "获取域名的所有DNS记录应该成功")
+	assert.Empty(t, records, "所有记录都应已删除")
+}
