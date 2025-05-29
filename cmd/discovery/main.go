@@ -51,7 +51,7 @@ func main() {
 	// 创建服务存储
 	serviceStorage := etcd.NewServiceStorage(etcdClient)
 
-	// 创建Echo实例
+	// 创建Echo实例 - 服务注册API (8080端口)
 	e := echo.New()
 
 	// 设置验证器
@@ -103,17 +103,59 @@ func main() {
 	}
 	log.Printf("DNS服务器启动成功，监听端口: %d", cfg.Server.DNSPort)
 
-	// 创建HTTP服务器
+	// 创建管理API Echo实例 (9090端口)
+	adminAPI := echo.New()
+	adminAPI.Validator = &CustomValidator{validator: validate}
+
+	// 管理API中间件
+	adminAPI.Use(middleware.Logger())
+	adminAPI.Use(middleware.Recover())
+	adminAPI.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete},
+	}))
+
+	// 创建管理API处理器
+	adminServiceHandler := handler.NewAdminServiceHandler(serviceStorage)
+	metricsHandler := handler.NewMetricsHandler(serviceStorage)
+
+	// 注册管理API路由
+	router.RegisterAdminRoutes(adminAPI, adminServiceHandler, healthHandler, metricsHandler)
+
+	// 管理API基础路由
+	adminAPI.GET("/", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{
+			"message": "Kong DNS Discovery Admin API 运行正常",
+			"status":  "running",
+			"version": "1.0.0",
+		})
+	})
+
+	// 创建服务注册HTTP服务器 (8080端口)
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.RegisterPort),
 		Handler: e,
 	}
 
-	// 启动HTTP服务器
+	// 创建管理API HTTP服务器 (9090端口)
+	adminServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Server.AdminPort),
+		Handler: adminAPI,
+	}
+
+	// 启动服务注册HTTP服务器
 	go func() {
-		log.Printf("启动 Kong DNS Discovery 服务，监听端口: %d", cfg.Server.RegisterPort)
+		log.Printf("启动 Kong DNS Discovery 服务注册API，监听端口: %d", cfg.Server.RegisterPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP服务器启动失败: %v", err)
+			log.Fatalf("服务注册HTTP服务器启动失败: %v", err)
+		}
+	}()
+
+	// 启动管理API HTTP服务器
+	go func() {
+		log.Printf("启动 Kong DNS Discovery 管理API，监听端口: %d", cfg.Server.AdminPort)
+		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("管理API HTTP服务器启动失败: %v", err)
 		}
 	}()
 
@@ -129,7 +171,12 @@ func main() {
 
 	// 关闭HTTP服务器
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP服务器关闭失败: %v", err)
+		log.Printf("服务注册HTTP服务器关闭失败: %v", err)
+	}
+
+	// 关闭管理API HTTP服务器
+	if err := adminServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("管理API HTTP服务器关闭失败: %v", err)
 	}
 
 	// 关闭DNS服务器

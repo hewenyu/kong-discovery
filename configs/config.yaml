@@ -1,41 +1,46 @@
-# Kong Discovery 服务配置文件
+# Kong DNS Discovery 配置文件
 
-# 服务端口配置
+# 服务器配置
 server:
-  # 注册服务端口
+  # 服务注册API端口（供服务实例注册、注销、心跳使用）
   register_port: 8080
-  # 管理服务端口
+  # 管理API端口（供管理界面和运维监控使用）
   admin_port: 9090
-  # DNS服务端口
+  # DNS服务端口（对外提供DNS解析服务）
   dns_port: 53
 
-# ETCD配置
+# etcd配置
 etcd:
+  # etcd节点地址列表
   endpoints:
-    - "localhost:2379"
+    - localhost:2379
+  # 连接超时时间
   dial_timeout: 5s
+  # 认证信息（可选）
   username: ""
   password: ""
 
-# DNS配置
+# DNS服务配置
 dns:
   # 服务域名后缀
-  domain: "service.local"
-  # 上游DNS服务器
+  domain: service.local
+  # 上游DNS服务器（未知域名将转发到这些服务器）
   upstream:
-    - "8.8.8.8:53"
-    - "114.114.114.114:53"
-  # DNS缓存TTL (秒)
+    - 8.8.8.8:53
+    - 114.114.114.114:53
+  # DNS缓存TTL（秒）
   cache_ttl: 60
 
-# 心跳检测配置
+# 心跳配置
 heartbeat:
-  # 心跳间隔 (秒)
+  # 心跳间隔（秒）
   interval: 30
-  # 超时时间 (秒)
+  # 心跳超时时间（秒）
   timeout: 90
 
 # 日志配置
 log:
-  level: "info"
-  file: "logs/kong-discovery.log" 
+  # 日志级别（debug, info, warn, error）
+  level: info
+  # 日志文件路径
+  file: logs/kong-discovery.log 
