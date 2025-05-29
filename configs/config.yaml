@@ -1,0 +1,41 @@
+# Kong Discovery 服务配置文件
+
+# 服务端口配置
+server:
+  # 注册服务端口
+  register_port: 8080
+  # 管理服务端口
+  admin_port: 9090
+  # DNS服务端口
+  dns_port: 53
+
+# ETCD配置
+etcd:
+  endpoints:
+    - "localhost:2379"
+  dial_timeout: 5s
+  username: ""
+  password: ""
+
+# DNS配置
+dns:
+  # 服务域名后缀
+  domain: "service.local"
+  # 上游DNS服务器
+  upstream:
+    - "8.8.8.8:53"
+    - "114.114.114.114:53"
+  # DNS缓存TTL (秒)
+  cache_ttl: 60
+
+# 心跳检测配置
+heartbeat:
+  # 心跳间隔 (秒)
+  interval: 30
+  # 超时时间 (秒)
+  timeout: 90
+
+# 日志配置
+log:
+  level: "info"
+  file: "logs/kong-discovery.log" 
