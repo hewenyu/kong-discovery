@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -12,12 +13,13 @@ import (
 
 // ServiceInstance 表示一个服务实例
 type ServiceInstance struct {
-	ServiceName string            `json:"service_name"`       // 服务名称
-	InstanceID  string            `json:"instance_id"`        // 实例ID（UUID）
-	IPAddress   string            `json:"ip_address"`         // IP地址
-	Port        int               `json:"port"`               // 端口
-	Metadata    map[string]string `json:"metadata,omitempty"` // 可选元数据（版本、区域等）
-	TTL         int               `json:"ttl"`                // 租约TTL（秒）
+	ServiceName   string            `json:"service_name"`       // 服务名称
+	InstanceID    string            `json:"instance_id"`        // 实例ID（UUID）
+	IPAddress     string            `json:"ip_address"`         // IP地址
+	Port          int               `json:"port"`               // 端口
+	Metadata      map[string]string `json:"metadata,omitempty"` // 可选元数据（版本、区域等）
+	TTL           int               `json:"ttl"`                // 租约TTL（秒）
+	LastHeartbeat string            `json:"last_heartbeat"`     // 最后心跳时间
 }
 
 // RegisterService 将服务实例注册到etcd
@@ -25,6 +27,9 @@ func (e *EtcdClient) RegisterService(ctx context.Context, instance *ServiceInsta
 	if e.client == nil {
 		return fmt.Errorf("etcd客户端未连接")
 	}
+
+	// 设置初始心跳时间
+	instance.LastHeartbeat = time.Now().Format(time.RFC3339)
 
 	// 生成服务实例键
 	key := getServiceInstanceKey(instance.ServiceName, instance.InstanceID)
@@ -217,6 +222,9 @@ func (e *EtcdClient) RefreshServiceLease(ctx context.Context, serviceName, insta
 	if ttl > 0 {
 		instance.TTL = ttl
 	}
+
+	// 更新最后心跳时间
+	instance.LastHeartbeat = time.Now().Format(time.RFC3339)
 
 	// 创建新的租约
 	lease, err := e.client.Grant(ctx, int64(instance.TTL))

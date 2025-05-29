@@ -31,6 +31,25 @@ export interface ServiceDetailResponse {
   ttl: number;
   metadata?: Record<string, string>;
   message?: string;
+  last_heartbeat?: string;
+  timestamp: string;
+}
+
+export interface ServiceInstanceResponse {
+  service_name: string;
+  instance_id: string;
+  ip_address: string;
+  port: number;
+  status: string;
+  last_heartbeat: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ServiceInstancesResponse {
+  success: boolean;
+  instances: ServiceInstanceResponse[];
+  count: number;
+  message?: string;
   timestamp: string;
 }
 
@@ -95,6 +114,9 @@ export const serviceApi = {
   
   // 获取服务列表
   getServices: () => apiClient.get<any, ServiceListResponse>('/admin/services'),
+  
+  // 获取所有服务实例
+  getAllServiceInstances: () => apiClient.get<any, ServiceInstancesResponse>('/admin/services/instances'),
   
   // 获取服务详情
   getServiceDetail: (serviceName: string, instanceId: string) => 

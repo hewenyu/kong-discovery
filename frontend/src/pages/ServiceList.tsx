@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Table, Card, Typography, Tag, Space, Button, Input } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { serviceApi } from '../api/client';
+import type { ServiceInstanceResponse } from '../api/client';
 import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
@@ -12,9 +13,8 @@ interface Service {
   ip: string;
   port: number;
   status: string;
-  metadata?: Record<string, string>;
-  registeredAt: string;
   lastHeartbeat: string;
+  metadata?: Record<string, string>;
 }
 
 const ServiceList = () => {
@@ -30,10 +30,25 @@ const ServiceList = () => {
   const fetchServices = async () => {
     setLoading(true);
     try {
-      const data = await serviceApi.getServices();
-      setServices(Array.isArray(data) ? data : []);
+      const response = await serviceApi.getAllServiceInstances();
+      if (response.success && response.instances) {
+        // 转换API响应为组件状态格式
+        const serviceInstances = response.instances.map((instance: ServiceInstanceResponse) => ({
+          serviceName: instance.service_name,
+          instanceId: instance.instance_id,
+          ip: instance.ip_address,
+          port: instance.port,
+          status: instance.status,
+          lastHeartbeat: instance.last_heartbeat,
+          metadata: instance.metadata
+        }));
+        setServices(serviceInstances);
+      } else {
+        setServices([]);
+      }
     } catch (error) {
       console.error('获取服务列表失败:', error);
+      setServices([]);
     } finally {
       setLoading(false);
     }

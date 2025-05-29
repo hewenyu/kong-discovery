@@ -151,6 +151,9 @@ func (h *EchoHandler) registerManagementRoutes() {
 	// 获取服务列表端点
 	h.managementServer.GET("/admin/services", h.getAllServicesHandler)
 
+	// 获取服务实例列表
+	h.managementServer.GET("/admin/services/instances", h.getAllServiceInstancesHandler)
+
 	// 获取服务详情端点
 	h.managementServer.GET("/admin/services/:serviceName/:instanceId", h.getServiceDetailHandler)
 
@@ -414,15 +417,16 @@ type ServiceListResponse struct {
 
 // ServiceDetailResponse 定义服务详情响应结构
 type ServiceDetailResponse struct {
-	Success     bool              `json:"success"`            // 是否成功
-	ServiceName string            `json:"service_name"`       // 服务名称
-	InstanceID  string            `json:"instance_id"`        // 实例ID
-	IPAddress   string            `json:"ip_address"`         // IP地址
-	Port        int               `json:"port"`               // 端口
-	TTL         int               `json:"ttl"`                // TTL（秒）
-	Metadata    map[string]string `json:"metadata,omitempty"` // 可选元数据
-	Message     string            `json:"message,omitempty"`  // 可选消息
-	Timestamp   string            `json:"timestamp"`          // 时间戳
+	Success       bool              `json:"success"`            // 是否成功
+	ServiceName   string            `json:"service_name"`       // 服务名称
+	InstanceID    string            `json:"instance_id"`        // 实例ID
+	IPAddress     string            `json:"ip_address"`         // IP地址
+	Port          int               `json:"port"`               // 端口
+	TTL           int               `json:"ttl"`                // TTL（秒）
+	Metadata      map[string]string `json:"metadata,omitempty"` // 可选元数据
+	Message       string            `json:"message,omitempty"`  // 可选消息
+	LastHeartbeat string            `json:"last_heartbeat"`     // 最后心跳时间
+	Timestamp     string            `json:"timestamp"`          // 时间戳
 }
 
 // getAllServicesHandler 处理获取所有服务列表的请求
@@ -507,14 +511,15 @@ func (h *EchoHandler) getServiceDetailHandler(c echo.Context) error {
 
 	// 返回实例详情
 	return c.JSON(http.StatusOK, &ServiceDetailResponse{
-		Success:     true,
-		ServiceName: targetInstance.ServiceName,
-		InstanceID:  targetInstance.InstanceID,
-		IPAddress:   targetInstance.IPAddress,
-		Port:        targetInstance.Port,
-		TTL:         targetInstance.TTL,
-		Metadata:    targetInstance.Metadata,
-		Timestamp:   time.Now().Format(time.RFC3339),
+		Success:       true,
+		ServiceName:   targetInstance.ServiceName,
+		InstanceID:    targetInstance.InstanceID,
+		IPAddress:     targetInstance.IPAddress,
+		Port:          targetInstance.Port,
+		TTL:           targetInstance.TTL,
+		Metadata:      targetInstance.Metadata,
+		LastHeartbeat: targetInstance.LastHeartbeat,
+		Timestamp:     time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -831,6 +836,78 @@ func (h *EchoHandler) deleteDNSRecordHandler(c echo.Context) error {
 		Domain:    domain,
 		Type:      recordType,
 		Message:   "DNS记录删除成功",
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+// ServiceInstanceResponse 表示单个服务实例的响应
+type ServiceInstanceResponse struct {
+	ServiceName   string            `json:"service_name"`       // 服务名称
+	InstanceID    string            `json:"instance_id"`        // 实例ID
+	IPAddress     string            `json:"ip_address"`         // IP地址
+	Port          int               `json:"port"`               // 端口
+	Status        string            `json:"status"`             // 状态，"active"或其他
+	LastHeartbeat string            `json:"last_heartbeat"`     // 最后心跳时间
+	Metadata      map[string]string `json:"metadata,omitempty"` // 可选元数据
+}
+
+// ServiceInstancesResponse 定义服务实例列表响应结构
+type ServiceInstancesResponse struct {
+	Success   bool                      `json:"success"`           // 是否成功
+	Instances []ServiceInstanceResponse `json:"instances"`         // 服务实例列表
+	Count     int                       `json:"count"`             // 实例数量
+	Message   string                    `json:"message,omitempty"` // 可选消息
+	Timestamp string                    `json:"timestamp"`         // 时间戳
+}
+
+// getAllServiceInstancesHandler 处理获取所有服务实例的请求
+func (h *EchoHandler) getAllServiceInstancesHandler(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// 从etcd获取所有服务名称
+	serviceNames, err := h.etcdClient.GetAllServiceNames(ctx)
+	if err != nil {
+		h.logger.Error("获取服务列表失败", zap.Error(err))
+		return c.JSON(http.StatusInternalServerError, &ServiceInstancesResponse{
+			Success:   false,
+			Message:   "获取服务列表失败: " + err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	// 所有服务实例的响应列表
+	var allInstances []ServiceInstanceResponse
+
+	// 对每个服务，获取其所有实例
+	for _, serviceName := range serviceNames {
+		instances, err := h.etcdClient.GetServiceInstances(ctx, serviceName)
+		if err != nil {
+			h.logger.Warn("获取服务实例失败",
+				zap.String("service", serviceName),
+				zap.Error(err))
+			continue
+		}
+
+		// 转换为响应格式
+		for _, instance := range instances {
+			instanceResp := ServiceInstanceResponse{
+				ServiceName:   instance.ServiceName,
+				InstanceID:    instance.InstanceID,
+				IPAddress:     instance.IPAddress,
+				Port:          instance.Port,
+				Status:        "active", // 默认为活跃状态，可以根据TTL和心跳时间计算
+				LastHeartbeat: instance.LastHeartbeat,
+				Metadata:      instance.Metadata,
+			}
+			allInstances = append(allInstances, instanceResp)
+		}
+	}
+
+	// 返回所有服务实例
+	return c.JSON(http.StatusOK, &ServiceInstancesResponse{
+		Success:   true,
+		Instances: allInstances,
+		Count:     len(allInstances),
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 }

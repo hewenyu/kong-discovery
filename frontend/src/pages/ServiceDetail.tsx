@@ -3,29 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Descriptions, Button, Spin, Typography, Space, Tag, Divider, Row, Col } from 'antd';
 import { ArrowLeftOutlined, ClockCircleOutlined, CodeOutlined, InfoCircleOutlined, GlobalOutlined } from '@ant-design/icons';
 import { serviceApi } from '../api/client';
+import type { ServiceDetailResponse } from '../api/client';
 
 const { Title, Text } = Typography;
-
-interface ServiceDetail {
-  serviceName: string;
-  instanceId: string;
-  ip: string;
-  port: number;
-  status: string;
-  metadata?: Record<string, string>;
-  registeredAt: string;
-  lastHeartbeat: string;
-  dnsRecords?: {
-    type: string;
-    name: string;
-    value: string;
-  }[];
-}
 
 const ServiceDetailPage = () => {
   const { serviceName, instanceId } = useParams<{ serviceName: string; instanceId: string }>();
   const [loading, setLoading] = useState(true);
-  const [service, setService] = useState<ServiceDetail | null>(null);
+  const [service, setService] = useState<ServiceDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -39,8 +24,13 @@ const ServiceDetailPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await serviceApi.getServiceDetail(name, id);
-      setService(data);
+      const response = await serviceApi.getServiceDetail(name, id);
+      if (response.success) {
+        setService(response);
+      } else {
+        setError(response.message || '获取服务详情失败');
+        setService(null);
+      }
     } catch (err) {
       console.error('获取服务详情失败:', err);
       setError('获取服务详情失败，请稍后重试');
@@ -90,22 +80,22 @@ const ServiceDetailPage = () => {
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Title level={3} style={{ margin: 0 }}>
-            {service.serviceName} 
-            <Tag color={service.status === 'active' ? 'success' : 'error'} style={{ marginLeft: 8 }}>
-              {service.status === 'active' ? '活跃' : '离线'}
+            {service.service_name} 
+            <Tag color="success" style={{ marginLeft: 8 }}>
+              活跃
             </Tag>
           </Title>
           
           <Button 
             type="primary" 
-            onClick={() => fetchServiceDetail(service.serviceName, service.instanceId)}
+            onClick={() => fetchServiceDetail(service.service_name, service.instance_id)}
             className="kong-button-primary"
           >
             刷新
           </Button>
         </div>
         
-        <Text type="secondary">实例ID: {service.instanceId}</Text>
+        <Text type="secondary">实例ID: {service.instance_id}</Text>
       </div>
 
       <Row gutter={16}>
@@ -115,10 +105,11 @@ const ServiceDetailPage = () => {
               <InfoCircleOutlined /> 基本信息
             </div>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="服务名称">{service.serviceName}</Descriptions.Item>
-              <Descriptions.Item label="实例ID">{service.instanceId}</Descriptions.Item>
-              <Descriptions.Item label="IP地址">{service.ip}</Descriptions.Item>
+              <Descriptions.Item label="服务名称">{service.service_name}</Descriptions.Item>
+              <Descriptions.Item label="实例ID">{service.instance_id}</Descriptions.Item>
+              <Descriptions.Item label="IP地址">{service.ip_address}</Descriptions.Item>
               <Descriptions.Item label="端口">{service.port}</Descriptions.Item>
+              <Descriptions.Item label="TTL">{service.ttl}秒</Descriptions.Item>
             </Descriptions>
           </div>
         </Col>
@@ -129,11 +120,11 @@ const ServiceDetailPage = () => {
               <ClockCircleOutlined /> 时间信息
             </div>
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="注册时间">
-                {new Date(service.registeredAt).toLocaleString()}
-              </Descriptions.Item>
               <Descriptions.Item label="最后心跳">
-                {new Date(service.lastHeartbeat).toLocaleString()}
+                {service.last_heartbeat ? new Date(service.last_heartbeat).toLocaleString() : '未知'}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据刷新时间">
+                {new Date(service.timestamp).toLocaleString()}
               </Descriptions.Item>
             </Descriptions>
           </div>
@@ -155,17 +146,21 @@ const ServiceDetailPage = () => {
         </div>
       )}
       
-      {service.dnsRecords && service.dnsRecords.length > 0 && (
+      {service.metadata?.domain && (
         <div className="kong-card">
           <div className="kong-card-title">
-            <GlobalOutlined /> DNS记录
+            <GlobalOutlined /> DNS信息
           </div>
           <Descriptions bordered column={1} size="small">
-            {service.dnsRecords.map((record, index) => (
-              <Descriptions.Item key={index} label={`${record.type} 记录 (${record.name})`}>
-                {record.value}
-              </Descriptions.Item>
-            ))}
+            <Descriptions.Item label="域名">
+              {service.metadata.domain}
+            </Descriptions.Item>
+            <Descriptions.Item label="A记录">
+              {service.ip_address}
+            </Descriptions.Item>
+            <Descriptions.Item label="SRV记录">
+              {`10 10 ${service.port} ${service.instance_id}.${service.metadata.domain}`}
+            </Descriptions.Item>
           </Descriptions>
         </div>
       )}
