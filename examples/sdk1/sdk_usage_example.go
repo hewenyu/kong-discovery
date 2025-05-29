@@ -164,25 +164,6 @@ func createDNSRecordExample(ctx context.Context) error {
 		fmt.Printf("SRV记录创建成功: %+v\n", srvResponse)
 	}
 
-	// 额外创建一个测试SRV记录，直接按DNS格式要求
-	testSrvDomain := fmt.Sprintf("_test-srv._tcp.default.svc.cluster.local")
-	testSrvValue := fmt.Sprintf("10 10 %d %s.default.svc.cluster.local.", Port, ServiceName)
-
-	testSrvRecord := &sdk.DNSRecord{
-		Domain: testSrvDomain,
-		Type:   "SRV",
-		Value:  testSrvValue,
-		TTL:    60,
-	}
-
-	fmt.Printf("正在创建测试SRV记录: %s %s %s\n", testSrvRecord.Domain, testSrvRecord.Type, testSrvRecord.Value)
-	testSrvResponse, err := client.CreateDNSRecord(ctx, testSrvRecord)
-	if err != nil {
-		fmt.Printf("创建测试SRV记录失败: %v\n", err)
-	} else {
-		fmt.Printf("测试SRV记录创建成功: %+v\n", testSrvResponse)
-	}
-
 	return nil
 }
 
