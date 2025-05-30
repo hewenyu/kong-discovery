@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -347,17 +348,27 @@ func (s *EtcdServiceStore) CleanupStaleServices(ctx context.Context, before time
 	// 找出过期的服务
 	staleServices := make([]*model.Service, 0)
 	for _, service := range services {
+		// 添加日志记录
+		log.Printf("检查服务 %s (ID: %s) 的心跳时间: %v, 过期时间: %v, 是否过期: %v",
+			service.Name, service.ID, service.LastHeartbeat, before, service.LastHeartbeat.Before(before))
+
 		if service.LastHeartbeat.Before(before) {
 			staleServices = append(staleServices, service)
 		}
 	}
 
+	log.Printf("找到 %d 个过期服务", len(staleServices))
+
 	// 删除过期的服务
+	deletedCount := 0
 	for _, service := range staleServices {
+		log.Printf("尝试删除过期服务: %s (ID: %s)", service.Name, service.ID)
 		if err := s.Deregister(ctx, service.ID); err != nil {
-			return len(staleServices) - 1, fmt.Errorf("删除过期服务失败: %w", err)
+			log.Printf("删除过期服务 %s (ID: %s) 失败: %v", service.Name, service.ID, err)
+			continue
 		}
+		deletedCount++
 	}
 
-	return len(staleServices), nil
+	return deletedCount, nil
 }

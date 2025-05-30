@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,59 +291,111 @@ func TestEtcdServiceStore_CleanupStaleServices(t *testing.T) {
 	// 创建测试上下文
 	ctx := context.Background()
 
-	// 创建多个服务，包括一些过期的服务
-	services := []*model.Service{
+	// 直接创建两个过期服务和两个新鲜服务
+	freshTime := time.Now()
+	staleTime := freshTime.Add(-5 * time.Minute) // 5分钟前，模拟过期服务
+
+	// 修复：服务ID在JSON数据中必须与键名中的ID一致
+	freshID1 := uuid.New().String()
+	freshID2 := uuid.New().String()
+	freshServices := []struct {
+		id        string
+		name      string
+		namespace string
+		data      []byte
+	}{
 		{
-			Name:          "fresh-service-1",
-			Namespace:     "test",
-			IP:            "192.168.1.1",
-			Port:          8081,
-			LastHeartbeat: time.Now(),
+			id:        freshID1,
+			name:      "fresh-service-1",
+			namespace: "test",
+			data:      []byte(`{"id":"` + freshID1 + `","name":"fresh-service-1","namespace":"test","ip":"192.168.1.1","port":8081,"health":"healthy","registered_at":"` + freshTime.Format(time.RFC3339Nano) + `","last_heartbeat":"` + freshTime.Format(time.RFC3339Nano) + `"}`),
 		},
 		{
-			Name:          "fresh-service-2",
-			Namespace:     "test",
-			IP:            "192.168.1.2",
-			Port:          8082,
-			LastHeartbeat: time.Now(),
-		},
-		{
-			Name:          "stale-service-1",
-			Namespace:     "test",
-			IP:            "192.168.1.3",
-			Port:          8083,
-			LastHeartbeat: time.Now().Add(-5 * time.Minute),
-		},
-		{
-			Name:          "stale-service-2",
-			Namespace:     "test",
-			IP:            "192.168.1.4",
-			Port:          8084,
-			LastHeartbeat: time.Now().Add(-10 * time.Minute),
+			id:        freshID2,
+			name:      "fresh-service-2",
+			namespace: "test",
+			data:      []byte(`{"id":"` + freshID2 + `","name":"fresh-service-2","namespace":"test","ip":"192.168.1.2","port":8082,"health":"healthy","registered_at":"` + freshTime.Format(time.RFC3339Nano) + `","last_heartbeat":"` + freshTime.Format(time.RFC3339Nano) + `"}`),
 		},
 	}
 
-	// 注册所有服务
-	for _, service := range services {
-		err := store.Register(ctx, service)
+	// 手动构造过期服务
+	staleID1 := uuid.New().String()
+	staleID2 := uuid.New().String()
+	staleServices := []struct {
+		id        string
+		name      string
+		namespace string
+		data      []byte
+	}{
+		{
+			id:        staleID1,
+			name:      "stale-service-1",
+			namespace: "test",
+			data:      []byte(`{"id":"` + staleID1 + `","name":"stale-service-1","namespace":"test","ip":"192.168.1.3","port":8083,"health":"healthy","registered_at":"` + staleTime.Format(time.RFC3339Nano) + `","last_heartbeat":"` + staleTime.Format(time.RFC3339Nano) + `"}`),
+		},
+		{
+			id:        staleID2,
+			name:      "stale-service-2",
+			namespace: "test",
+			data:      []byte(`{"id":"` + staleID2 + `","name":"stale-service-2","namespace":"test","ip":"192.168.1.4","port":8084,"health":"healthy","registered_at":"` + staleTime.Format(time.RFC3339Nano) + `","last_heartbeat":"` + staleTime.Format(time.RFC3339Nano) + `"}`),
+		},
+	}
+
+	// 手动写入服务数据到etcd
+	for _, service := range freshServices {
+		// 写入服务数据
+		err := client.Put(ctx, getServiceKey(service.id), service.data)
+		assert.NoError(t, err)
+
+		// 写入服务名称索引
+		nameIndexKey := getServiceNameIndexKey(service.name, service.namespace)
+		serviceIDs := []string{service.id}
+		serviceIDsData, err := json.Marshal(serviceIDs)
+		assert.NoError(t, err)
+		err = client.Put(ctx, nameIndexKey, serviceIDsData)
+		assert.NoError(t, err)
+	}
+
+	for _, service := range staleServices {
+		// 写入服务数据
+		err := client.Put(ctx, getServiceKey(service.id), service.data)
+		assert.NoError(t, err)
+
+		// 写入服务名称索引
+		nameIndexKey := getServiceNameIndexKey(service.name, service.namespace)
+		serviceIDs := []string{service.id}
+		serviceIDsData, err := json.Marshal(serviceIDs)
+		assert.NoError(t, err)
+		err = client.Put(ctx, nameIndexKey, serviceIDsData)
 		assert.NoError(t, err)
 	}
 
 	// 获取所有服务
 	allServices, err := store.ListAllServices(ctx)
 	assert.NoError(t, err)
-	assert.GreaterOrEqual(t, len(allServices), len(services))
+	assert.Equal(t, len(freshServices)+len(staleServices), len(allServices))
+
+	// 打印所有服务的心跳时间，用于调试
+	for _, service := range allServices {
+		t.Logf("服务 %s (ID: %s) 的最后心跳时间: %v", service.Name, service.ID, service.LastHeartbeat)
+	}
 
 	// 清理过期服务 (超过3分钟未心跳)
 	before := time.Now().Add(-3 * time.Minute)
+	t.Logf("清理 %v 之前的服务", before)
 	count, err := store.CleanupStaleServices(ctx, before)
 	assert.NoError(t, err)
-	assert.Equal(t, 2, count)
+	assert.Equal(t, len(staleServices), count)
 
 	// 获取所有服务，应该只剩下新鲜的服务
 	remainingServices, err := store.ListAllServices(ctx)
 	assert.NoError(t, err)
-	assert.Len(t, remainingServices, 2)
+	assert.Equal(t, len(freshServices), len(remainingServices))
+
+	// 检查剩余的服务是否都是新鲜的服务
+	for _, service := range remainingServices {
+		assert.True(t, strings.HasPrefix(service.Name, "fresh-"), "剩余的服务应该都是新鲜的服务")
+	}
 
 	// 清理测试数据
 	cleanupTestData(client, servicePrefix)
