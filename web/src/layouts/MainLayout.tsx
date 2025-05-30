@@ -72,7 +72,7 @@ const MainLayout: React.FC = () => {
   );
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', width: '100%', height: '100vh', overflow: 'hidden' }}>
       <CssBaseline />
       <AppBar
         position="fixed"
@@ -132,14 +132,20 @@ const MainLayout: React.FC = () => {
         component="main"
         sx={{ 
           flexGrow: 1, 
-          p: 3, 
+          p: 0,
           width: { sm: `calc(100% - ${drawerWidth}px)` },
+          maxWidth: '100%',
+          display: 'flex',
+          flexDirection: 'column',
           backgroundColor: 'background.default',
-          minHeight: '100vh'
+          minHeight: '100vh',
+          overflow: 'auto'
         }}
       >
         <Toolbar />
-        <Outlet />
+        <Box sx={{ p: { xs: 1, sm: 2 }, flexGrow: 1, width: '100%' }}>
+          <Outlet />
+        </Box>
       </Box>
     </Box>
   );
