@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/miekg/dns"
@@ -31,6 +32,11 @@ func NewServer(config *Config) Service {
 
 // Start 启动DNS服务器
 func (s *server) Start(ctx context.Context) error {
+	// 验证必要的配置
+	if s.config.ServiceStore == nil {
+		log.Println("警告: ServiceStore未设置，将只能返回硬编码响应")
+	}
+
 	// 设置DNS处理器
 	dnsHandler := dns.NewServeMux()
 	dnsHandler.HandleFunc(".", s.handleDNSRequest)
@@ -118,9 +124,18 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, q := range r.Question {
 		log.Printf("收到DNS查询请求: %s %s", q.Name, dns.TypeToString[q.Qtype])
 
-		// 目前仅支持A记录的硬编码响应
 		if q.Qtype == dns.TypeA {
-			// 简单的硬编码响应，返回127.0.0.1
+			// 尝试解析服务名和命名空间
+			serviceName, namespace, ok := s.parseServiceDomain(q.Name)
+			if ok {
+				// 如果解析成功，从etcd查询服务实例
+				if s.config.ServiceStore != nil {
+					m = s.handleServiceLookup(m, q, serviceName, namespace)
+					continue
+				}
+			}
+
+			// 如果不是服务域名或没有配置ServiceStore，返回硬编码响应
 			rr := &dns.A{
 				Hdr: dns.RR_Header{
 					Name:   q.Name,
@@ -145,4 +160,77 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	if err := w.WriteMsg(m); err != nil {
 		log.Printf("发送DNS响应失败: %v", err)
 	}
+}
+
+// parseServiceDomain 解析服务域名
+// 格式: service.namespace.domain
+// 返回: serviceName, namespace, ok
+func (s *server) parseServiceDomain(name string) (string, string, bool) {
+	// 移除末尾的点号
+	if strings.HasSuffix(name, ".") {
+		name = name[:len(name)-1]
+	}
+
+	// 检查域名是否使用我们的服务域
+	if !strings.HasSuffix(name, s.config.Domain) {
+		return "", "", false
+	}
+
+	// 移除域名后缀
+	name = name[:len(name)-len(s.config.Domain)-1] // 减1是为了移除分隔点
+
+	// 分割服务名和命名空间
+	parts := strings.Split(name, ".")
+	if len(parts) < 1 {
+		return "", "", false
+	}
+
+	if len(parts) == 1 {
+		// 只有服务名，使用默认命名空间
+		return parts[0], "default", true
+	}
+
+	// 服务名.命名空间
+	return parts[0], parts[1], true
+}
+
+// handleServiceLookup 处理服务查询
+func (s *server) handleServiceLookup(m *dns.Msg, q dns.Question, serviceName, namespace string) *dns.Msg {
+	ctx := context.Background()
+
+	services, err := s.config.ServiceStore.GetServiceByName(ctx, serviceName, namespace)
+	if err != nil {
+		log.Printf("查询服务[%s.%s]失败: %v", serviceName, namespace, err)
+		m.Rcode = dns.RcodeServerFailure
+		return m
+	}
+
+	if len(services) == 0 {
+		log.Printf("服务[%s.%s]不存在", serviceName, namespace)
+		m.Rcode = dns.RcodeNameError
+		return m
+	}
+
+	// 遍历所有健康的服务实例，添加到DNS响应中
+	for _, service := range services {
+		// 只返回健康的服务实例
+		if service.Health != "healthy" {
+			continue
+		}
+
+		rr := &dns.A{
+			Hdr: dns.RR_Header{
+				Name:   q.Name,
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    s.config.TTL,
+			},
+			A: net.ParseIP(service.IP),
+		}
+
+		m.Answer = append(m.Answer, rr)
+		log.Printf("返回服务[%s.%s]的A记录: %s", serviceName, namespace, service.IP)
+	}
+
+	return m
 }

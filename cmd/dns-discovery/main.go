@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/core/config"
+	"github.com/hewenyu/kong-discovery/internal/dns"
 	"github.com/hewenyu/kong-discovery/internal/registration"
 	"github.com/hewenyu/kong-discovery/internal/store/etcd"
+	"github.com/hewenyu/kong-discovery/internal/store/service"
 )
 
 var (
@@ -74,6 +76,9 @@ func main() {
 	}
 	log.Println("etcd连接测试成功")
 
+	// 创建服务存储
+	serviceStore := service.NewEtcdServiceStore(etcdClient, cfg.Namespace.Default)
+
 	// 启动服务注册API (8080端口)
 	registrationServer := registration.NewServer(etcdClient, cfg)
 	if err := registrationServer.Start(); err != nil {
@@ -82,7 +87,22 @@ func main() {
 
 	// TODO: 启动管理API (9090端口)
 
-	// TODO: 启动DNS服务 (53端口)
+	// 启动DNS服务 (53端口)
+	dnsConfig := &dns.Config{
+		DNSAddr:      fmt.Sprintf(":%d", cfg.Server.DNS.Port),
+		Domain:       cfg.Server.DNS.Domain,
+		TTL:          cfg.Server.DNS.TTL,
+		Timeout:      5 * time.Second,
+		UpstreamDNS:  cfg.Server.DNS.Upstream.Servers,
+		EnableTCP:    cfg.Server.DNS.TCPEnabled,
+		EnableUDP:    cfg.Server.DNS.UDPEnabled,
+		ServiceStore: serviceStore, // 传递服务存储
+	}
+
+	dnsServer := dns.NewServer(dnsConfig)
+	if err := dnsServer.Start(ctx); err != nil {
+		log.Fatalf("启动DNS服务失败: %v", err)
+	}
 
 	fmt.Printf("服务已启动，DNS服务(端口%d)，服务注册API(端口%d)，管理API(端口%d)\n",
 		cfg.Server.DNS.Port, cfg.Server.Registration.Port, cfg.Server.Admin.Port)
@@ -108,6 +128,15 @@ func main() {
 		defer wg.Done()
 		if err := registrationServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("关闭服务注册API失败: %v", err)
+		}
+	}()
+
+	// 关闭DNS服务
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := dnsServer.Stop(); err != nil {
+			log.Printf("关闭DNS服务失败: %v", err)
 		}
 	}()
 

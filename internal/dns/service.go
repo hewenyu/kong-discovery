@@ -3,6 +3,8 @@ package dns
 import (
 	"context"
 	"time"
+
+	"github.com/hewenyu/kong-discovery/internal/store/service"
 )
 
 // Service 定义DNS服务的接口
@@ -36,17 +38,21 @@ type Config struct {
 
 	// EnableUDP 是否启用UDP监听
 	EnableUDP bool
+
+	// ServiceStore 是服务存储接口
+	ServiceStore service.ServiceStore
 }
 
 // DefaultConfig 返回默认的DNS服务配置
 func DefaultConfig() *Config {
 	return &Config{
-		DNSAddr:     ":53",
-		Domain:      "service.local",
-		TTL:         60,
-		Timeout:     5 * time.Second,
-		UpstreamDNS: []string{"8.8.8.8:53", "114.114.114.114:53"},
-		EnableTCP:   true,
-		EnableUDP:   true,
+		DNSAddr:      ":53",
+		Domain:       "service.local",
+		TTL:          60,
+		Timeout:      5 * time.Second,
+		UpstreamDNS:  []string{"8.8.8.8:53", "114.114.114.114:53"},
+		EnableTCP:    true,
+		EnableUDP:    true,
+		ServiceStore: nil, // 需要外部设置
 	}
 }

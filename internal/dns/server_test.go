@@ -2,11 +2,67 @@ package dns
 
 import (
 	"context"
+	"errors"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/hewenyu/kong-discovery/internal/core/config"
+	"github.com/hewenyu/kong-discovery/internal/core/model"
+	"github.com/hewenyu/kong-discovery/internal/store/etcd"
+	"github.com/hewenyu/kong-discovery/internal/store/service"
 	"github.com/miekg/dns"
 )
+
+func getEtcdClient() (*etcd.Client, error) {
+	etcdEndpoints := os.Getenv("ETCD_ENDPOINTS")
+	if etcdEndpoints == "" {
+		return nil, errors.New("ETCD_ENDPOINTS 未设置")
+	}
+
+	return etcd.NewClient(&config.EtcdConfig{
+		Endpoints:      []string{etcdEndpoints},
+		DialTimeout:    5 * time.Second,
+		RequestTimeout: 5 * time.Second,
+	})
+}
+
+// 跳过测试如果无法连接etcd
+func skipIfNoEtcd(t *testing.T) *etcd.Client {
+
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		t.Skip("跳过测试：无法连接etcd")
+		return nil
+	}
+
+	// 测试etcd连接
+	ctx := context.Background()
+	testKey := "/test/dns-test-connection"
+	testValue := []byte("test-connection")
+	err = etcdClient.Put(ctx, testKey, testValue)
+	if err != nil {
+		etcdClient.Close()
+		t.Skip("跳过测试：etcd连接测试失败")
+		return nil
+	}
+
+	value, err := etcdClient.Get(ctx, testKey)
+	if err != nil || string(value) != string(testValue) {
+		etcdClient.Close()
+		t.Skip("跳过测试：etcd读取测试失败")
+		return nil
+	}
+
+	err = etcdClient.Delete(ctx, testKey)
+	if err != nil {
+		etcdClient.Close()
+		t.Skip("跳过测试：etcd删除测试失败")
+		return nil
+	}
+
+	return etcdClient
+}
 
 func TestDNSServer(t *testing.T) {
 	// 使用非标准端口以避免需要root权限
@@ -56,9 +112,103 @@ func TestDNSServer(t *testing.T) {
 		t.Fatalf("响应不是A记录: %T", r.Answer[0])
 	}
 
-	// 检查IP地址是否为127.0.0.1
+	// 检查IP地址是否为127.0.0.1（默认硬编码响应）
 	if aRecord.A.String() != "127.0.0.1" {
 		t.Fatalf("A记录IP错误，期望:127.0.0.1，实际:%s", aRecord.A.String())
+	}
+
+	// 关闭服务器
+	if err := server.Stop(); err != nil {
+		t.Fatalf("停止DNS服务器失败: %v", err)
+	}
+}
+
+func TestDNSServerWithRealServiceStore(t *testing.T) {
+	// 获取etcd客户端，如果连接失败则跳过测试
+	etcdClient := skipIfNoEtcd(t)
+	if etcdClient == nil {
+		return
+	}
+	defer etcdClient.Close()
+
+	ctx := context.Background()
+
+	// 创建真实的服务存储
+	serviceStore := service.NewEtcdServiceStore(etcdClient, "default")
+
+	// 注册测试服务
+	testService := &model.Service{
+		ID:            "test-service-real-1",
+		Namespace:     "default",
+		Name:          "test-service-real",
+		IP:            "192.168.1.100",
+		Port:          8080,
+		Health:        model.HealthStatusHealthy,
+		RegisteredAt:  time.Now(),
+		LastHeartbeat: time.Now(),
+		TTL:           60 * time.Second,
+	}
+
+	// 清理可能存在的测试服务
+	_ = serviceStore.Deregister(ctx, testService.ID)
+
+	// 注册测试服务
+	if err := serviceStore.Register(ctx, testService); err != nil {
+		t.Fatalf("注册测试服务失败: %v", err)
+	}
+	// 确保测试结束后清理服务
+	defer serviceStore.Deregister(ctx, testService.ID)
+
+	// 使用非标准端口以避免需要root权限
+	config := DefaultConfig()
+	config.DNSAddr = "127.0.0.1:15354"
+	config.ServiceStore = serviceStore
+
+	// 创建并启动DNS服务器
+	server := NewServer(config)
+
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("启动DNS服务器失败: %v", err)
+	}
+
+	// 确保服务器有时间启动
+	time.Sleep(500 * time.Millisecond)
+
+	// 创建DNS客户端并测试查询
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion("test-service-real.default.service.local.", dns.TypeA)
+	m.RecursionDesired = true
+
+	r, _, err := c.Exchange(m, "127.0.0.1:15354")
+	if err != nil {
+		t.Fatalf("DNS查询失败: %v", err)
+	}
+
+	// 检查是否收到响应
+	if r == nil {
+		t.Fatal("未收到DNS响应")
+	}
+
+	// 检查响应代码
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+	}
+
+	// 检查是否有回答
+	if len(r.Answer) == 0 {
+		t.Fatal("DNS响应中没有回答")
+	}
+
+	// 检查A记录
+	aRecord, ok := r.Answer[0].(*dns.A)
+	if !ok {
+		t.Fatalf("响应不是A记录: %T", r.Answer[0])
+	}
+
+	// 检查IP地址是否为测试服务的IP
+	if aRecord.A.String() != testService.IP {
+		t.Fatalf("A记录IP错误，期望:%s，实际:%s", testService.IP, aRecord.A.String())
 	}
 
 	// 关闭服务器
