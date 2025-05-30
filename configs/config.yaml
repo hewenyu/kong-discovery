@@ -1,0 +1,44 @@
+# Kong网关DNS服务发现系统配置文件
+
+# 服务器配置
+server:
+  # DNS服务配置
+  dns:
+    port: 53  # DNS服务端口
+    tcp_enabled: true  # 是否启用TCP
+    udp_enabled: true  # 是否启用UDP
+    domain: "service.local"  # 服务域名后缀
+    ttl: 30  # DNS记录TTL (秒)
+    cache:
+      enabled: true  # 是否启用DNS缓存
+      ttl: 60  # 缓存TTL (秒)
+    upstream:
+      enabled: false  # 是否启用上游DNS
+      servers: ["8.8.8.8:53", "114.114.114.114:53"]  # 上游DNS服务器
+
+  # 服务注册API配置
+  registration:
+    port: 8080  # 服务注册API端口
+    host: "0.0.0.0"  # 监听地址
+
+  # 管理API配置
+  admin:
+    port: 9090  # 管理API端口
+    host: "0.0.0.0"  # 监听地址
+
+# etcd配置
+etcd:
+  # 在本地开发环境使用localhost，在Docker环境中使用服务名称
+  endpoints: ["etcd:2379"]  # etcd服务器地址
+  dial_timeout: 5s  # 连接超时时间
+  request_timeout: 10s  # 请求超时时间
+
+# 服务配置
+service:
+  heartbeat:
+    interval: 30s  # 心跳间隔
+    timeout: 90s  # 心跳超时时间（超过此时间未收到心跳则判定为不健康）
+
+# 命名空间配置
+namespace:
+  default: "default"  # 默认命名空间 

@@ -1,0 +1,46 @@
+version: '3'
+services:
+  # etcd服务
+  etcd:
+    image: bitnami/etcd:3.5
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+    volumes:
+      - etcd_data:/bitnami/etcd
+    networks:
+      - kong-net
+
+  # DNS服务发现
+  dns-discovery:
+    build:
+      context: ../../
+      dockerfile: build/docker/app/Dockerfile
+    ports:
+      - "53:53/udp"      # DNS UDP端口
+      - "53:53/tcp"      # DNS TCP端口
+      - "8080:8080/tcp"  # 服务注册API端口
+      - "9090:9090/tcp"  # 管理API端口
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ../../configs:/app/configs
+    depends_on:
+      - etcd
+    networks:
+      - kong-net
+    # 添加CAP_NET_BIND_SERVICE以允许绑定低端口
+    cap_add:
+      - NET_BIND_SERVICE
+
+# 定义网络
+networks:
+  kong-net:
+    driver: bridge
+
+# 定义卷
+volumes:
+  etcd_data: 
