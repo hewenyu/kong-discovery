@@ -121,6 +121,9 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	m.SetReply(r)
 	m.Authoritative = true
 
+	// 记录是否找到了本地服务记录
+	foundLocalRecord := false
+
 	// 处理查询请求
 	for _, q := range r.Question {
 		log.Printf("收到DNS查询请求: %s %s", q.Name, dns.TypeToString[q.Qtype])
@@ -134,35 +137,42 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 				case dns.TypeA:
 					// A记录查询
 					m = s.handleARecordLookup(m, q, serviceName, namespace)
+					if len(m.Answer) > 0 {
+						foundLocalRecord = true
+					}
 					continue
 				case dns.TypeSRV:
 					// SRV记录查询
 					m = s.handleSRVRecordLookup(m, q, serviceName, namespace)
+					if len(m.Answer) > 0 {
+						foundLocalRecord = true
+					}
 					continue
 				}
 			}
 		}
 
-		// 如果不是服务域名或没有配置ServiceStore，或者查询类型不支持，返回硬编码响应
-		if q.Qtype == dns.TypeA {
-			rr := &dns.A{
-				Hdr: dns.RR_Header{
-					Name:   q.Name,
-					Rrtype: dns.TypeA,
-					Class:  dns.ClassINET,
-					Ttl:    s.config.TTL,
-				},
-				A: net.ParseIP("127.0.0.1"),
-			}
-			m.Answer = append(m.Answer, rr)
-			log.Printf("返回硬编码A记录: %s -> %s", q.Name, "127.0.0.1")
-		}
+		// 对于非服务域名或不支持的查询类型，我们不再返回硬编码响应
+		// 删除旧的硬编码A记录逻辑
 	}
 
-	// 如果没有找到任何记录，返回NXDOMAIN
-	if len(m.Answer) == 0 {
-		m.Rcode = dns.RcodeNameError
-		log.Printf("域名不存在,返回NXDOMAIN")
+	// 如果没有找到任何本地记录，并且配置了上游DNS，则转发到上游DNS
+	if !foundLocalRecord && len(m.Answer) == 0 {
+		if len(s.config.UpstreamDNS) > 0 {
+			log.Printf("本地无匹配记录，转发到上游DNS")
+			resp, err := s.forwardToUpstream(r)
+			if err != nil {
+				log.Printf("转发到上游DNS失败: %v", err)
+				m.Rcode = dns.RcodeServerFailure
+			} else {
+				// 使用上游返回的响应替换我们的响应
+				*m = *resp
+			}
+		} else {
+			// 如果没有配置上游DNS，返回NXDOMAIN
+			m.Rcode = dns.RcodeNameError
+			log.Printf("域名不存在且未配置上游DNS，返回NXDOMAIN")
+		}
 	}
 
 	// 发送响应
@@ -325,4 +335,43 @@ func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, 
 	}
 
 	return m
+}
+
+// forwardToUpstream 将DNS请求转发到上游DNS服务器
+func (s *server) forwardToUpstream(r *dns.Msg) (*dns.Msg, error) {
+	// 创建一个新的DNS客户端
+	c := new(dns.Client)
+	c.Timeout = s.config.Timeout
+
+	// 尝试每个上游DNS服务器，直到成功或全部失败
+	var lastErr error
+	for _, upstreamAddr := range s.config.UpstreamDNS {
+		log.Printf("转发DNS查询到上游服务器: %s", upstreamAddr)
+
+		// 发送请求到上游DNS服务器
+		resp, _, err := c.Exchange(r, upstreamAddr)
+		if err != nil {
+			log.Printf("上游DNS服务器 %s 请求失败: %v", upstreamAddr, err)
+			lastErr = err
+			continue
+		}
+
+		// 如果响应是截断的(TC=1)，可以尝试使用TCP重新查询
+		if resp.Truncated {
+			log.Printf("上游DNS响应被截断，尝试使用TCP重新查询")
+			c.Net = "tcp"
+			resp, _, err = c.Exchange(r, upstreamAddr)
+			if err != nil {
+				log.Printf("上游DNS服务器 %s TCP请求失败: %v", upstreamAddr, err)
+				lastErr = err
+				continue
+			}
+		}
+
+		log.Printf("从上游DNS服务器 %s 成功获取响应", upstreamAddr)
+		return resp, nil
+	}
+
+	// 所有上游DNS服务器都失败了
+	return nil, fmt.Errorf("所有上游DNS服务器都失败: %v", lastErr)
 }

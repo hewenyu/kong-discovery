@@ -70,6 +70,8 @@ func TestDNSServer(t *testing.T) {
 	// 使用非标准端口以避免需要root权限
 	config := DefaultConfig()
 	config.DNSAddr = "127.0.0.1:15353"
+	// 清空上游DNS配置，以确保服务域不会被转发
+	config.UpstreamDNS = []string{}
 
 	// 创建并启动DNS服务器
 	server := NewServer(config)
@@ -85,7 +87,8 @@ func TestDNSServer(t *testing.T) {
 	// 创建DNS客户端并测试查询
 	c := new(dns.Client)
 	m := new(dns.Msg)
-	m.SetQuestion("test.service.local.", dns.TypeA)
+	// 查询一个不属于我们服务域的域名，应该返回NXDOMAIN
+	m.SetQuestion("test.example.com.", dns.TypeA)
 	m.RecursionDesired = true
 
 	r, _, err := c.Exchange(m, "127.0.0.1:15353")
@@ -98,25 +101,29 @@ func TestDNSServer(t *testing.T) {
 		t.Fatal("未收到DNS响应")
 	}
 
-	// 检查响应代码
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+	// 检查响应代码 - 应为NXDOMAIN
+	if r.Rcode != dns.RcodeNameError {
+		t.Fatalf("DNS响应错误，应返回NXDOMAIN(3)，实际返回: %v", r.Rcode)
 	}
 
-	// 检查是否有回答
-	if len(r.Answer) == 0 {
-		t.Fatal("DNS响应中没有回答")
+	// 测试查询服务域内的域名
+	m = new(dns.Msg)
+	m.SetQuestion("test.service.local.", dns.TypeA)
+	m.RecursionDesired = true
+
+	r, _, err = c.Exchange(m, "127.0.0.1:15353")
+	if err != nil {
+		t.Fatalf("DNS查询失败: %v", err)
 	}
 
-	// 检查A记录
-	aRecord, ok := r.Answer[0].(*dns.A)
-	if !ok {
-		t.Fatalf("响应不是A记录: %T", r.Answer[0])
+	// 检查是否收到响应
+	if r == nil {
+		t.Fatal("未收到DNS响应")
 	}
 
-	// 检查IP地址是否为127.0.0.1（默认硬编码响应）
-	if aRecord.A.String() != "127.0.0.1" {
-		t.Fatalf("A记录IP错误，期望:127.0.0.1，实际:%s", aRecord.A.String())
+	// 检查响应代码 - 应为NXDOMAIN（因为没有配置ServiceStore）
+	if r.Rcode != dns.RcodeNameError {
+		t.Fatalf("DNS响应错误，应返回NXDOMAIN(3)，实际返回: %v", r.Rcode)
 	}
 
 	// 关闭服务器
@@ -718,4 +725,122 @@ func TestDNSServerWithRealServiceStore(t *testing.T) {
 	if err := server.Stop(); err != nil {
 		t.Fatalf("停止DNS服务器失败: %v", err)
 	}
+}
+
+// TestRealUpstreamDNSForward 测试真实的上游DNS转发功能
+func TestRealUpstreamDNSForward(t *testing.T) {
+	// 使用非标准端口以避免需要root权限
+	config := DefaultConfig()
+	config.DNSAddr = "127.0.0.1:15355"
+	config.UpstreamDNS = []string{"8.8.8.8:53", "114.114.114.114:53"} // 使用Google DNS和114 DNS作为上游DNS
+
+	// 创建并启动DNS服务器
+	server := NewServer(config)
+	ctx := context.Background()
+
+	if err := server.Start(ctx); err != nil {
+		t.Fatalf("启动DNS服务器失败: %v", err)
+	}
+	defer server.Stop()
+
+	// 确保服务器有时间启动
+	time.Sleep(500 * time.Millisecond)
+
+	// 创建DNS客户端并测试查询一个外部域名
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion("www.baidu.com.", dns.TypeA) // 使用百度的域名
+	m.RecursionDesired = true
+
+	r, _, err := c.Exchange(m, "127.0.0.1:15355")
+	if err != nil {
+		t.Fatalf("DNS查询失败: %v", err)
+	}
+
+	// 检查是否收到响应
+	if r == nil {
+		t.Fatal("未收到DNS响应")
+	}
+
+	// 检查响应代码
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+	}
+
+	// 检查是否有回答
+	if len(r.Answer) == 0 {
+		t.Fatal("DNS响应中没有回答")
+	}
+
+	// 检查至少有一个A记录
+	hasARecord := false
+	for _, ans := range r.Answer {
+		if _, ok := ans.(*dns.A); ok {
+			hasARecord = true
+			break
+		}
+	}
+
+	if !hasARecord {
+		t.Fatal("DNS响应中没有A记录")
+	}
+
+	t.Logf("成功从上游DNS获取www.baidu.com的解析结果")
+
+	// 测试不存在的域名
+	m = new(dns.Msg)
+	m.SetQuestion("nonexistent-domain-12345.example.", dns.TypeA)
+	m.RecursionDesired = true
+
+	r, _, err = c.Exchange(m, "127.0.0.1:15355")
+	if err != nil {
+		t.Fatalf("DNS查询失败: %v", err)
+	}
+
+	// 检查是否收到响应
+	if r == nil {
+		t.Fatal("未收到DNS响应")
+	}
+
+	// 检查响应代码 - 对于不存在的域名，上游DNS应该返回NXDOMAIN
+	if r.Rcode != dns.RcodeNameError {
+		t.Fatalf("对于不存在的域名，预期返回NXDOMAIN(3)，实际返回: %v", r.Rcode)
+	}
+
+	t.Logf("对不存在的域名正确返回了NXDOMAIN")
+
+	// 测试禁用上游DNS的情况
+	config.UpstreamDNS = []string{}    // 清空上游DNS列表
+	config.DNSAddr = "127.0.0.1:15356" // 使用不同端口
+
+	server2 := NewServer(config)
+	if err := server2.Start(ctx); err != nil {
+		t.Fatalf("启动第二个DNS服务器失败: %v", err)
+	}
+	defer server2.Stop()
+
+	// 确保服务器有时间启动
+	time.Sleep(500 * time.Millisecond)
+
+	// 查询外部域名
+	m = new(dns.Msg)
+	m.SetQuestion("www.baidu.com.", dns.TypeA)
+	m.RecursionDesired = true
+
+	r, _, err = c.Exchange(m, "127.0.0.1:15356")
+	if err != nil {
+		t.Fatalf("DNS查询失败: %v", err)
+	}
+
+	// 检查是否收到响应
+	if r == nil {
+		t.Fatal("未收到DNS响应")
+	}
+
+	// 无上游DNS时，应返回NXDOMAIN
+	if r.Rcode != dns.RcodeNameError {
+		t.Fatalf("无上游DNS时，预期返回NXDOMAIN(3)，实际返回: %v", r.Rcode)
+	}
+
+	t.Logf("未配置上游DNS时，对外部域名正确返回了NXDOMAIN")
 }
