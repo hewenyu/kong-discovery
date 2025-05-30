@@ -7,7 +7,9 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/hewenyu/kong-discovery/internal/core/model"
 	"github.com/miekg/dns"
 )
 
@@ -17,6 +19,8 @@ type server struct {
 	udpServer  *dns.Server
 	tcpServer  *dns.Server
 	shutdownWg sync.WaitGroup
+	// 用于轮询负载均衡的计数器（原子操作）
+	roundRobinCounter uint64
 }
 
 // NewServer 创建一个新的DNS服务实例
@@ -26,7 +30,8 @@ func NewServer(config *Config) Service {
 	}
 
 	return &server{
-		config: config,
+		config:            config,
+		roundRobinCounter: 0,
 	}
 }
 
@@ -124,18 +129,26 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, q := range r.Question {
 		log.Printf("收到DNS查询请求: %s %s", q.Name, dns.TypeToString[q.Qtype])
 
-		if q.Qtype == dns.TypeA {
-			// 尝试解析服务名和命名空间
-			serviceName, namespace, ok := s.parseServiceDomain(q.Name)
-			if ok {
-				// 如果解析成功，从etcd查询服务实例
-				if s.config.ServiceStore != nil {
-					m = s.handleServiceLookup(m, q, serviceName, namespace)
+		// 尝试解析服务名和命名空间
+		serviceName, namespace, ok := s.parseServiceDomain(q.Name)
+		if ok {
+			// 如果解析成功，从etcd查询服务实例
+			if s.config.ServiceStore != nil {
+				switch q.Qtype {
+				case dns.TypeA:
+					// A记录查询
+					m = s.handleARecordLookup(m, q, serviceName, namespace)
+					continue
+				case dns.TypeSRV:
+					// SRV记录查询
+					m = s.handleSRVRecordLookup(m, q, serviceName, namespace)
 					continue
 				}
 			}
+		}
 
-			// 如果不是服务域名或没有配置ServiceStore，返回硬编码响应
+		// 如果不是服务域名或没有配置ServiceStore，或者查询类型不支持，返回硬编码响应
+		if q.Qtype == dns.TypeA {
 			rr := &dns.A{
 				Hdr: dns.RR_Header{
 					Name:   q.Name,
@@ -194,8 +207,45 @@ func (s *server) parseServiceDomain(name string) (string, string, bool) {
 	return parts[0], parts[1], true
 }
 
-// handleServiceLookup 处理服务查询
-func (s *server) handleServiceLookup(m *dns.Msg, q dns.Question, serviceName, namespace string) *dns.Msg {
+// 获取轮询索引，用于负载均衡
+func (s *server) getNextRoundRobinIndex(total int) int {
+	if total <= 0 {
+		return 0
+	}
+
+	// 递增计数器并取模，实现轮询
+	return int(atomic.AddUint64(&s.roundRobinCounter, 1) % uint64(total))
+}
+
+// 对健康服务列表进行轮询处理，返回按轮询排序后的服务列表
+func (s *server) roundRobinServices(services []*model.Service) []*model.Service {
+	// 筛选出健康的服务
+	var healthyServices []*model.Service
+	for _, svc := range services {
+		if svc.Health == "healthy" {
+			healthyServices = append(healthyServices, svc)
+		}
+	}
+
+	if len(healthyServices) == 0 {
+		return healthyServices
+	}
+
+	// 获取轮询起点
+	startIdx := s.getNextRoundRobinIndex(len(healthyServices))
+
+	// 重新排序服务列表，从startIdx开始
+	result := make([]*model.Service, len(healthyServices))
+	for i := 0; i < len(healthyServices); i++ {
+		idx := (startIdx + i) % len(healthyServices)
+		result[i] = healthyServices[idx]
+	}
+
+	return result
+}
+
+// handleARecordLookup 处理A记录查询
+func (s *server) handleARecordLookup(m *dns.Msg, q dns.Question, serviceName, namespace string) *dns.Msg {
 	ctx := context.Background()
 
 	services, err := s.config.ServiceStore.GetServiceByName(ctx, serviceName, namespace)
@@ -211,13 +261,16 @@ func (s *server) handleServiceLookup(m *dns.Msg, q dns.Question, serviceName, na
 		return m
 	}
 
-	// 遍历所有健康的服务实例，添加到DNS响应中
-	for _, service := range services {
-		// 只返回健康的服务实例
-		if service.Health != "healthy" {
-			continue
-		}
+	// 对服务列表进行轮询排序
+	healthyServices := s.roundRobinServices(services)
+	if len(healthyServices) == 0 {
+		log.Printf("服务[%s.%s]没有健康的实例", serviceName, namespace)
+		m.Rcode = dns.RcodeNameError
+		return m
+	}
 
+	// 遍历健康的服务实例，添加到DNS响应中
+	for _, service := range healthyServices {
 		rr := &dns.A{
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
@@ -229,7 +282,76 @@ func (s *server) handleServiceLookup(m *dns.Msg, q dns.Question, serviceName, na
 		}
 
 		m.Answer = append(m.Answer, rr)
-		log.Printf("返回服务[%s.%s]的A记录: %s", serviceName, namespace, service.IP)
+		log.Printf("返回服务[%s.%s]的A记录: %s (轮询顺序)", serviceName, namespace, service.IP)
+	}
+
+	return m
+}
+
+// handleSRVRecordLookup 处理SRV记录查询
+func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, namespace string) *dns.Msg {
+	ctx := context.Background()
+
+	services, err := s.config.ServiceStore.GetServiceByName(ctx, serviceName, namespace)
+	if err != nil {
+		log.Printf("查询服务[%s.%s]失败: %v", serviceName, namespace, err)
+		m.Rcode = dns.RcodeServerFailure
+		return m
+	}
+
+	if len(services) == 0 {
+		log.Printf("服务[%s.%s]不存在", serviceName, namespace)
+		m.Rcode = dns.RcodeNameError
+		return m
+	}
+
+	// 对服务列表进行轮询排序
+	healthyServices := s.roundRobinServices(services)
+	if len(healthyServices) == 0 {
+		log.Printf("服务[%s.%s]没有健康的实例", serviceName, namespace)
+		m.Rcode = dns.RcodeNameError
+		return m
+	}
+
+	// 遍历所有健康的服务实例，添加到DNS响应中
+	for idx, service := range healthyServices {
+		// 为每个服务实例创建一个唯一的目标名称
+		// 格式：instance-{idx}.{service}.{namespace}.{domain}
+		targetDomain := fmt.Sprintf("instance-%d.%s.%s.%s.", idx, serviceName, namespace, s.config.Domain)
+
+		// 创建SRV记录
+		// SRV记录优先级默认为0（最高），权重默认为10
+		srvRR := &dns.SRV{
+			Hdr: dns.RR_Header{
+				Name:   q.Name,
+				Rrtype: dns.TypeSRV,
+				Class:  dns.ClassINET,
+				Ttl:    s.config.TTL,
+			},
+			Priority: 0,  // 优先级，0为最高
+			Weight:   10, // 权重，用于负载均衡
+			Port:     uint16(service.Port),
+			Target:   targetDomain,
+		}
+
+		// 创建相应的A记录，解析SRV记录的目标域名
+		aRR := &dns.A{
+			Hdr: dns.RR_Header{
+				Name:   targetDomain,
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    s.config.TTL,
+			},
+			A: net.ParseIP(service.IP),
+		}
+
+		// 将SRV记录添加到回答中
+		m.Answer = append(m.Answer, srvRR)
+
+		// 将A记录添加到附加部分
+		m.Extra = append(m.Extra, aRR)
+
+		log.Printf("返回服务[%s.%s]的SRV记录: %s:%d (轮询顺序)", serviceName, namespace, service.IP, service.Port)
 	}
 
 	return m

@@ -174,42 +174,210 @@ func TestDNSServerWithRealServiceStore(t *testing.T) {
 	// 确保服务器有时间启动
 	time.Sleep(500 * time.Millisecond)
 
-	// 创建DNS客户端并测试查询
-	c := new(dns.Client)
-	m := new(dns.Msg)
-	m.SetQuestion("test-service-real.default.service.local.", dns.TypeA)
-	m.RecursionDesired = true
+	// 测试A记录查询
+	t.Run("ARecordQuery", func(t *testing.T) {
+		c := new(dns.Client)
+		m := new(dns.Msg)
+		m.SetQuestion("test-service-real.default.service.local.", dns.TypeA)
+		m.RecursionDesired = true
 
-	r, _, err := c.Exchange(m, "127.0.0.1:15354")
-	if err != nil {
-		t.Fatalf("DNS查询失败: %v", err)
-	}
+		r, _, err := c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
 
-	// 检查是否收到响应
-	if r == nil {
-		t.Fatal("未收到DNS响应")
-	}
+		// 检查是否收到响应
+		if r == nil {
+			t.Fatal("未收到DNS响应")
+		}
 
-	// 检查响应代码
-	if r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
-	}
+		// 检查响应代码
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
 
-	// 检查是否有回答
-	if len(r.Answer) == 0 {
-		t.Fatal("DNS响应中没有回答")
-	}
+		// 检查是否有回答
+		if len(r.Answer) == 0 {
+			t.Fatal("DNS响应中没有回答")
+		}
 
-	// 检查A记录
-	aRecord, ok := r.Answer[0].(*dns.A)
-	if !ok {
-		t.Fatalf("响应不是A记录: %T", r.Answer[0])
-	}
+		// 检查A记录
+		aRecord, ok := r.Answer[0].(*dns.A)
+		if !ok {
+			t.Fatalf("响应不是A记录: %T", r.Answer[0])
+		}
 
-	// 检查IP地址是否为测试服务的IP
-	if aRecord.A.String() != testService.IP {
-		t.Fatalf("A记录IP错误，期望:%s，实际:%s", testService.IP, aRecord.A.String())
-	}
+		// 检查IP地址是否为测试服务的IP
+		if aRecord.A.String() != testService.IP {
+			t.Fatalf("A记录IP错误，期望:%s，实际:%s", testService.IP, aRecord.A.String())
+		}
+	})
+
+	// 测试SRV记录查询
+	t.Run("SRVRecordQuery", func(t *testing.T) {
+		c := new(dns.Client)
+		m := new(dns.Msg)
+		m.SetQuestion("test-service-real.default.service.local.", dns.TypeSRV)
+		m.RecursionDesired = true
+
+		r, _, err := c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
+
+		// 检查是否收到响应
+		if r == nil {
+			t.Fatal("未收到DNS响应")
+		}
+
+		// 检查响应代码
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
+
+		// 检查是否有回答
+		if len(r.Answer) == 0 {
+			t.Fatal("DNS响应中没有回答")
+		}
+
+		// 检查SRV记录
+		srvRecord, ok := r.Answer[0].(*dns.SRV)
+		if !ok {
+			t.Fatalf("响应不是SRV记录: %T", r.Answer[0])
+		}
+
+		// 检查端口是否为测试服务的端口
+		if srvRecord.Port != uint16(testService.Port) {
+			t.Fatalf("SRV记录端口错误，期望:%d，实际:%d", testService.Port, srvRecord.Port)
+		}
+
+		// 检查附加区段（应包含A记录）
+		if len(r.Extra) == 0 {
+			t.Fatal("DNS响应中没有附加记录")
+		}
+
+		// 检查附加A记录
+		aRecord, ok := r.Extra[0].(*dns.A)
+		if !ok {
+			t.Fatalf("附加记录不是A记录: %T", r.Extra[0])
+		}
+
+		// 检查附加A记录的IP是否为测试服务的IP
+		if aRecord.A.String() != testService.IP {
+			t.Fatalf("附加A记录IP错误，期望:%s，实际:%s", testService.IP, aRecord.A.String())
+		}
+	})
+
+	// 测试负载均衡 - 注册多个服务实例
+	t.Run("LoadBalancingTest", func(t *testing.T) {
+		// 注册第二个测试服务实例
+		testService2 := &model.Service{
+			ID:            "test-service-real-2",
+			Namespace:     "default",
+			Name:          "test-service-real",
+			IP:            "192.168.1.200",
+			Port:          8081,
+			Health:        model.HealthStatusHealthy,
+			RegisteredAt:  time.Now(),
+			LastHeartbeat: time.Now(),
+			TTL:           60 * time.Second,
+		}
+
+		// 清理可能存在的测试服务
+		_ = serviceStore.Deregister(ctx, testService2.ID)
+
+		// 注册第二个测试服务
+		if err := serviceStore.Register(ctx, testService2); err != nil {
+			t.Fatalf("注册第二个测试服务失败: %v", err)
+		}
+		// 确保测试结束后清理服务
+		defer serviceStore.Deregister(ctx, testService2.ID)
+
+		// 连续查询多次，检查负载均衡
+		c := new(dns.Client)
+		firstIP := ""
+		ipChanged := false
+
+		// 连续查询5次，应该看到至少有一次轮询切换
+		for i := 0; i < 5; i++ {
+			m := new(dns.Msg)
+			m.SetQuestion("test-service-real.default.service.local.", dns.TypeA)
+			m.RecursionDesired = true
+
+			r, _, err := c.Exchange(m, "127.0.0.1:15354")
+			if err != nil {
+				t.Fatalf("DNS查询失败: %v", err)
+			}
+
+			if r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
+				t.Fatalf("DNS响应错误或没有回答")
+			}
+
+			aRecord, ok := r.Answer[0].(*dns.A)
+			if !ok {
+				t.Fatalf("响应不是A记录: %T", r.Answer[0])
+			}
+
+			currentIP := aRecord.A.String()
+			t.Logf("第%d次查询返回IP: %s", i+1, currentIP)
+
+			// 第一次查询，记录IP
+			if i == 0 {
+				firstIP = currentIP
+			} else if currentIP != firstIP {
+				// IP发生变化，说明负载均衡生效
+				ipChanged = true
+			}
+		}
+
+		if !ipChanged {
+			t.Fatalf("负载均衡测试失败，5次查询返回的IP始终相同，没有观察到轮询")
+		} else {
+			t.Logf("负载均衡测试通过，观察到IP轮询")
+		}
+
+		// 测试SRV记录负载均衡
+		firstPort := uint16(0)
+		portChanged := false
+
+		// 连续查询5次，应该看到至少有一次轮询切换
+		for i := 0; i < 5; i++ {
+			m := new(dns.Msg)
+			m.SetQuestion("test-service-real.default.service.local.", dns.TypeSRV)
+			m.RecursionDesired = true
+
+			r, _, err := c.Exchange(m, "127.0.0.1:15354")
+			if err != nil {
+				t.Fatalf("DNS查询失败: %v", err)
+			}
+
+			if r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
+				t.Fatalf("DNS响应错误或没有回答")
+			}
+
+			srvRecord, ok := r.Answer[0].(*dns.SRV)
+			if !ok {
+				t.Fatalf("响应不是SRV记录: %T", r.Answer[0])
+			}
+
+			currentPort := srvRecord.Port
+			t.Logf("第%d次查询返回端口: %d", i+1, currentPort)
+
+			// 第一次查询，记录端口
+			if i == 0 {
+				firstPort = currentPort
+			} else if currentPort != firstPort {
+				// 端口发生变化，说明负载均衡生效
+				portChanged = true
+			}
+		}
+
+		if !portChanged {
+			t.Fatalf("SRV记录负载均衡测试失败，5次查询返回的端口始终相同，没有观察到轮询")
+		} else {
+			t.Logf("SRV记录负载均衡测试通过，观察到端口轮询")
+		}
+	})
 
 	// 关闭服务器
 	if err := server.Stop(); err != nil {
