@@ -7,7 +7,6 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/hewenyu/kong-discovery/internal/core/model"
 	"github.com/miekg/dns"
@@ -19,8 +18,6 @@ type server struct {
 	udpServer  *dns.Server
 	tcpServer  *dns.Server
 	shutdownWg sync.WaitGroup
-	// 用于轮询负载均衡的计数器（原子操作）
-	roundRobinCounter uint64
 }
 
 // NewServer 创建一个新的DNS服务实例
@@ -30,8 +27,7 @@ func NewServer(config *Config) Service {
 	}
 
 	return &server{
-		config:            config,
-		roundRobinCounter: 0,
+		config: config,
 	}
 }
 
@@ -207,18 +203,8 @@ func (s *server) parseServiceDomain(name string) (string, string, bool) {
 	return parts[0], parts[1], true
 }
 
-// 获取轮询索引，用于负载均衡
-func (s *server) getNextRoundRobinIndex(total int) int {
-	if total <= 0 {
-		return 0
-	}
-
-	// 递增计数器并取模，实现轮询
-	return int(atomic.AddUint64(&s.roundRobinCounter, 1) % uint64(total))
-}
-
-// 对健康服务列表进行轮询处理，返回按轮询排序后的服务列表
-func (s *server) roundRobinServices(services []*model.Service) []*model.Service {
+// filterHealthyServices 只过滤出健康的服务，不进行轮询排序
+func (s *server) filterHealthyServices(services []*model.Service) []*model.Service {
 	// 筛选出健康的服务
 	var healthyServices []*model.Service
 	for _, svc := range services {
@@ -227,21 +213,7 @@ func (s *server) roundRobinServices(services []*model.Service) []*model.Service 
 		}
 	}
 
-	if len(healthyServices) == 0 {
-		return healthyServices
-	}
-
-	// 获取轮询起点
-	startIdx := s.getNextRoundRobinIndex(len(healthyServices))
-
-	// 重新排序服务列表，从startIdx开始
-	result := make([]*model.Service, len(healthyServices))
-	for i := 0; i < len(healthyServices); i++ {
-		idx := (startIdx + i) % len(healthyServices)
-		result[i] = healthyServices[idx]
-	}
-
-	return result
+	return healthyServices
 }
 
 // handleARecordLookup 处理A记录查询
@@ -261,15 +233,15 @@ func (s *server) handleARecordLookup(m *dns.Msg, q dns.Question, serviceName, na
 		return m
 	}
 
-	// 对服务列表进行轮询排序
-	healthyServices := s.roundRobinServices(services)
+	// 只过滤健康服务，不进行轮询
+	healthyServices := s.filterHealthyServices(services)
 	if len(healthyServices) == 0 {
 		log.Printf("服务[%s.%s]没有健康的实例", serviceName, namespace)
 		m.Rcode = dns.RcodeNameError
 		return m
 	}
 
-	// 遍历健康的服务实例，添加到DNS响应中
+	// 遍历所有健康的服务实例，添加到DNS响应中
 	for _, service := range healthyServices {
 		rr := &dns.A{
 			Hdr: dns.RR_Header{
@@ -282,7 +254,7 @@ func (s *server) handleARecordLookup(m *dns.Msg, q dns.Question, serviceName, na
 		}
 
 		m.Answer = append(m.Answer, rr)
-		log.Printf("返回服务[%s.%s]的A记录: %s (轮询顺序)", serviceName, namespace, service.IP)
+		log.Printf("返回服务[%s.%s]的A记录: %s", serviceName, namespace, service.IP)
 	}
 
 	return m
@@ -305,8 +277,8 @@ func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, 
 		return m
 	}
 
-	// 对服务列表进行轮询排序
-	healthyServices := s.roundRobinServices(services)
+	// 只过滤健康服务，不进行轮询
+	healthyServices := s.filterHealthyServices(services)
 	if len(healthyServices) == 0 {
 		log.Printf("服务[%s.%s]没有健康的实例", serviceName, namespace)
 		m.Rcode = dns.RcodeNameError
@@ -320,7 +292,7 @@ func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, 
 		targetDomain := fmt.Sprintf("instance-%d.%s.%s.%s.", idx, serviceName, namespace, s.config.Domain)
 
 		// 创建SRV记录
-		// SRV记录优先级默认为0（最高），权重默认为10
+		// SRV记录优先级默认为0（最高），权重设为0，不使用权重进行负载均衡
 		srvRR := &dns.SRV{
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
@@ -328,8 +300,8 @@ func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, 
 				Class:  dns.ClassINET,
 				Ttl:    s.config.TTL,
 			},
-			Priority: 0,  // 优先级，0为最高
-			Weight:   10, // 权重，用于负载均衡
+			Priority: 0, // 优先级，0为最高
+			Weight:   0, // 权重设为0，由网关自行处理负载均衡
 			Port:     uint16(service.Port),
 			Target:   targetDomain,
 		}
@@ -351,7 +323,7 @@ func (s *server) handleSRVRecordLookup(m *dns.Msg, q dns.Question, serviceName, 
 		// 将A记录添加到附加部分
 		m.Extra = append(m.Extra, aRR)
 
-		log.Printf("返回服务[%s.%s]的SRV记录: %s:%d (轮询顺序)", serviceName, namespace, service.IP, service.Port)
+		log.Printf("返回服务[%s.%s]的SRV记录: %s:%d", serviceName, namespace, service.IP, service.Port)
 	}
 
 	return m
