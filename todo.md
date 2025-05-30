@@ -102,11 +102,11 @@
 ## 阶段 2: 管理功能 (后端API & 前端基础)
 
 ### 2.1 管理API服务 (端口 9090)
-- [ ] **T2.1.1**: 实现查询服务列表API (`GET /api/v1/services`, `GET /api/v1/services?namespace=...`)
+- [x] **T2.1.1**: 实现查询服务列表API (`GET /api/v1/services`, `GET /api/v1/services?namespace=...`)
     - *功能*: 从etcd读取服务列表，支持按命名空间过滤。
     - *前置任务*: T1.1.1
     - *测试用例*: 能正确返回所有服务或特定命名空间的服务，信息完整。
-- [ ] **T2.1.2**: 实现查询服务详情API (`GET /api/v1/services/{serviceId}`)
+- [x] **T2.1.2**: 实现查询服务详情API (`GET /api/v1/services/{serviceId}`)
     - *功能*: 从etcd读取特定服务实例的详细信息。
     - *前置任务*: T1.1.1
     - *测试用例*: 能正确返回指定服务的详情。

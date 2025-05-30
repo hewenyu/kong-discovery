@@ -204,9 +204,11 @@ func (s *EtcdServiceStore) UpdateHeartbeat(ctx context.Context, serviceID string
 		return fmt.Errorf("序列化服务信息失败: %w", err)
 	}
 
-	// 存储服务信息
+	// 存储服务信息，更新lease
 	serviceKey := getServiceKey(serviceID)
 	if service.TTL > 0 {
+		// 使用PutWithLease重新创建lease并更新服务信息
+		// 这会使TTL从当前时间重新计时
 		err = s.client.PutWithLease(ctx, serviceKey, data, service.TTL)
 	} else {
 		err = s.client.Put(ctx, serviceKey, data)
@@ -338,6 +340,7 @@ func (s *EtcdServiceStore) ListAllServices(ctx context.Context) ([]*model.Servic
 }
 
 // CleanupStaleServices 清理过期服务
+// 注意：etcd会根据TTL自动清理过期服务，本方法主要作为备份机制
 func (s *EtcdServiceStore) CleanupStaleServices(ctx context.Context, before time.Time) (int, error) {
 	// 获取所有服务信息
 	services, err := s.ListAllServices(ctx)
@@ -349,9 +352,11 @@ func (s *EtcdServiceStore) CleanupStaleServices(ctx context.Context, before time
 	staleServices := make([]*model.Service, 0)
 	for _, service := range services {
 		// 添加日志记录
-		log.Printf("检查服务 %s (ID: %s) 的心跳时间: %v, 过期时间: %v, 是否过期: %v",
+		log.Printf("检查服务 %s (ID: %s) 的心跳时间: %v, 心跳阈值时间: %v, 是否过期: %v",
 			service.Name, service.ID, service.LastHeartbeat, before, service.LastHeartbeat.Before(before))
 
+		// 如果这个服务还存在于etcd中，说明etcd的lease机制没有自动清理它
+		// 检查它的心跳时间是否过期，如果过期，手动清理
 		if service.LastHeartbeat.Before(before) {
 			staleServices = append(staleServices, service)
 		}

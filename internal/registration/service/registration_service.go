@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/core/model"
@@ -103,9 +104,17 @@ func (s *registrationService) UpdateHeartbeat(ctx context.Context, serviceID str
 }
 
 // CleanupStaleServices 清理过期服务
+// 注意：etcd会根据TTL自动清理过期服务，本方法主要作为备份机制，
+// 防止由于某些原因（如网络故障、etcd异常等）导致的服务未能及时清理
 func (s *registrationService) CleanupStaleServices(ctx context.Context) (int, error) {
 	// 计算过期时间
-	before := time.Now().Add(-s.heartbeatTimeout)
+	now := time.Now()
+	before := now.Add(-s.heartbeatTimeout)
+
+	// 添加详细日志
+	log.Printf("执行过期服务清理，当前时间: %v, 心跳超时时间: %v, 心跳阈值时间: %v (心跳时间早于此视为过期)",
+		now.Format("2006-01-02 15:04:05"), s.heartbeatTimeout, before.Format("2006-01-02 15:04:05"))
+	log.Printf("注意：此方法仅作为备份机制，主要依靠etcd根据TTL自动清理过期服务")
 
 	// 清理过期服务
 	count, err := s.store.CleanupStaleServices(ctx, before)
