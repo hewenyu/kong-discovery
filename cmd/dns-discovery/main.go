@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hewenyu/kong-discovery/internal/admin"
 	"github.com/hewenyu/kong-discovery/internal/core/config"
 	"github.com/hewenyu/kong-discovery/internal/dns"
 	"github.com/hewenyu/kong-discovery/internal/registration"
@@ -85,7 +86,11 @@ func main() {
 		log.Fatalf("启动服务注册API失败: %v", err)
 	}
 
-	// TODO: 启动管理API (9090端口)
+	// 启动管理API (9090端口)
+	adminServer := admin.NewServer(etcdClient, cfg)
+	if err := adminServer.Start(); err != nil {
+		log.Fatalf("启动管理API失败: %v", err)
+	}
 
 	// 启动DNS服务 (53端口)
 	dnsConfig := &dns.Config{
@@ -128,6 +133,15 @@ func main() {
 		defer wg.Done()
 		if err := registrationServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("关闭服务注册API失败: %v", err)
+		}
+	}()
+
+	// 关闭管理API
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := adminServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("关闭管理API失败: %v", err)
 		}
 	}()
 
