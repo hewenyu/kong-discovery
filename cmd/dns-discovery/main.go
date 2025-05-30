@@ -1,0 +1,100 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/hewenyu/kong-discovery/internal/core/config"
+	"github.com/hewenyu/kong-discovery/internal/store/etcd"
+)
+
+var (
+	configFile string
+)
+
+func init() {
+	flag.StringVar(&configFile, "config", "configs/config.yaml", "配置文件路径")
+}
+
+func main() {
+	flag.Parse()
+
+	// 从配置文件加载配置
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		log.Fatalf("加载配置失败: %v", err)
+	}
+	log.Printf("配置加载成功，DNS域名: %s, etcd端点: %v",
+		cfg.Server.DNS.Domain, cfg.Etcd.Endpoints)
+
+	// 创建上下文，用于优雅关闭
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 设置信号处理，以便优雅关闭
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// 初始化etcd客户端
+	etcdClient, err := etcd.NewClient(&cfg.Etcd)
+	if err != nil {
+		log.Fatalf("初始化etcd客户端失败: %v", err)
+	}
+	defer func() {
+		if err := etcdClient.Close(); err != nil {
+			log.Printf("关闭etcd客户端失败: %v", err)
+		}
+	}()
+
+	// 测试etcd连接
+	testKey := "/test/connection"
+	testValue := []byte("test-connection")
+	err = etcdClient.Put(ctx, testKey, testValue)
+	if err != nil {
+		log.Fatalf("etcd连接测试失败: %v", err)
+	}
+	value, err := etcdClient.Get(ctx, testKey)
+	if err != nil {
+		log.Fatalf("etcd读取测试失败: %v", err)
+	}
+	if string(value) != string(testValue) {
+		log.Fatalf("etcd测试值不一致，期望 %s，实际 %s", testValue, value)
+	}
+	err = etcdClient.Delete(ctx, testKey)
+	if err != nil {
+		log.Fatalf("etcd删除测试失败: %v", err)
+	}
+	log.Println("etcd连接测试成功")
+
+	// TODO: 启动服务注册API (8080端口)
+
+	// TODO: 启动管理API (9090端口)
+
+	// TODO: 启动DNS服务 (53端口)
+
+	fmt.Printf("服务已启动，DNS服务(端口%d)，服务注册API(端口%d)，管理API(端口%d)\n",
+		cfg.Server.DNS.Port, cfg.Server.Registration.Port, cfg.Server.Admin.Port)
+
+	// 等待终止信号
+	sig := <-signalChan
+	log.Printf("接收到信号: %v，准备关闭服务", sig)
+
+	// 执行优雅关闭
+	cancel()
+
+	// 使用ctx设置一个超时，等待服务关闭
+	const shutdownTimeout = 5 * time.Second
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
+	defer shutdownCancel()
+
+	// TODO: 等待各服务关闭完成
+	<-shutdownCtx.Done()
+
+	log.Println("服务已关闭")
+}
