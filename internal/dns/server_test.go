@@ -386,6 +386,146 @@ func TestDNSServerWithRealServiceStore(t *testing.T) {
 		}
 	})
 
+	// 测试同一IP不同端口的情况
+	t.Run("SameIPDifferentPortsTest", func(t *testing.T) {
+		// 清理之前的测试数据
+		_ = serviceStore.Deregister(ctx, testService.ID)
+
+		// 注册多个使用相同IP但不同端口的服务实例
+		sameIP := "192.168.1.50"
+		instances := []struct {
+			id   string
+			port int
+		}{
+			{"same-ip-service-1", 8001},
+			{"same-ip-service-2", 8002},
+			{"same-ip-service-3", 8003},
+		}
+
+		// 注册服务实例
+		for _, instance := range instances {
+			svcInstance := &model.Service{
+				ID:            instance.id,
+				Namespace:     "default",
+				Name:          "same-ip-service",
+				IP:            sameIP,
+				Port:          instance.port,
+				Health:        model.HealthStatusHealthy,
+				RegisteredAt:  time.Now(),
+				LastHeartbeat: time.Now(),
+				TTL:           60 * time.Second,
+			}
+
+			// 清理可能存在的实例
+			_ = serviceStore.Deregister(ctx, svcInstance.ID)
+
+			// 注册服务实例
+			if err := serviceStore.Register(ctx, svcInstance); err != nil {
+				t.Fatalf("注册服务实例失败[%s]: %v", instance.id, err)
+			}
+
+			// 确保测试结束后清理服务
+			defer serviceStore.Deregister(ctx, svcInstance.ID)
+		}
+
+		// 测试A记录查询
+		c := new(dns.Client)
+		m := new(dns.Msg)
+		m.SetQuestion("same-ip-service.default.service.local.", dns.TypeA)
+		m.RecursionDesired = true
+
+		r, _, err := c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
+
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
+
+		// 对于A记录，应该只返回一个IP（因为IP相同）
+		// 但在实际应用中DNS服务返回所有实例的IP，即使重复
+		if len(r.Answer) != len(instances) {
+			t.Fatalf("期望返回%d个A记录，实际返回%d个", len(instances), len(r.Answer))
+		}
+
+		// 检查返回的IP是否为预期值
+		for _, ans := range r.Answer {
+			aRecord, ok := ans.(*dns.A)
+			if !ok {
+				t.Fatalf("响应不是A记录: %T", ans)
+			}
+			if aRecord.A.String() != sameIP {
+				t.Fatalf("A记录IP错误，期望:%s，实际:%s", sameIP, aRecord.A.String())
+			}
+		}
+
+		t.Logf("A记录查询正确返回了相同IP: %s", sameIP)
+
+		// 测试SRV记录查询
+		m = new(dns.Msg)
+		m.SetQuestion("same-ip-service.default.service.local.", dns.TypeSRV)
+		m.RecursionDesired = true
+
+		// 添加EDNS0选项，设置更大的缓冲区大小
+		opt := new(dns.OPT)
+		opt.Hdr.Name = "."
+		opt.Hdr.Rrtype = dns.TypeOPT
+		opt.SetUDPSize(4096) // 设置更大的UDP缓冲区大小
+		m.Extra = append(m.Extra, opt)
+
+		r, _, err = c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
+
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
+
+		// 检查是否返回了所有服务实例的SRV记录
+		if len(r.Answer) != len(instances) {
+			t.Fatalf("期望返回%d个SRV记录，实际返回%d个", len(instances), len(r.Answer))
+		}
+
+		// 检查返回的端口是否包含所有实例的端口
+		ports := make(map[uint16]bool)
+		for _, ans := range r.Answer {
+			srvRecord, ok := ans.(*dns.SRV)
+			if !ok {
+				t.Fatalf("响应不是SRV记录: %T", ans)
+			}
+			ports[srvRecord.Port] = true
+		}
+
+		// 验证所有期望的端口都存在
+		for _, instance := range instances {
+			if !ports[uint16(instance.port)] {
+				t.Fatalf("返回的SRV记录缺少端口: %d", instance.port)
+			}
+		}
+
+		t.Logf("SRV记录查询正确返回了所有端口: %v", ports)
+
+		// 检查Extra部分是否包含所有A记录
+		if len(r.Extra) != len(instances) {
+			t.Fatalf("期望返回%d个额外A记录，实际返回%d个", len(instances), len(r.Extra))
+		}
+
+		// 检查所有Extra部分的IP地址是否相同
+		for _, extra := range r.Extra {
+			aRecord, ok := extra.(*dns.A)
+			if !ok {
+				t.Fatalf("额外记录不是A记录: %T", extra)
+			}
+			if aRecord.A.String() != sameIP {
+				t.Fatalf("额外A记录IP错误，期望:%s，实际:%s", sameIP, aRecord.A.String())
+			}
+		}
+
+		t.Logf("额外A记录正确返回了相同IP: %s", sameIP)
+	})
+
 	// 关闭服务器
 	if err := server.Stop(); err != nil {
 		t.Fatalf("停止DNS服务器失败: %v", err)
