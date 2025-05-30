@@ -8,6 +8,7 @@ import (
 // Service 表示一个服务实例
 type Service struct {
 	ID            string            `json:"id"`
+	Namespace     string            `json:"namespace"`
 	Name          string            `json:"name"`
 	IP            string            `json:"ip"`
 	Port          int               `json:"port"`
@@ -17,6 +18,15 @@ type Service struct {
 	RegisteredAt  time.Time         `json:"registered_at"`
 	LastHeartbeat time.Time         `json:"last_heartbeat"`
 	TTL           int               `json:"ttl"`
+}
+
+// Namespace 表示一个命名空间
+type Namespace struct {
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	ServiceCount int       `json:"service_count"`
 }
 
 // ServiceStorage 定义服务存储接口
@@ -33,14 +43,38 @@ type ServiceStorage interface {
 	// ListServices 获取所有服务实例列表
 	ListServices(ctx context.Context) ([]*Service, error)
 
+	// ListServicesByNamespace 获取指定命名空间的服务实例列表
+	ListServicesByNamespace(ctx context.Context, namespace string) ([]*Service, error)
+
 	// ListServicesByName 获取指定名称的服务实例列表
 	ListServicesByName(ctx context.Context, serviceName string) ([]*Service, error)
+
+	// ListServicesByNameAndNamespace 获取指定命名空间和名称的服务实例列表
+	ListServicesByNameAndNamespace(ctx context.Context, namespace, serviceName string) ([]*Service, error)
 
 	// UpdateServiceHeartbeat 更新服务心跳时间
 	UpdateServiceHeartbeat(ctx context.Context, serviceID string) error
 
 	// CleanupStaleServices 清理过期的服务实例
 	CleanupStaleServices(ctx context.Context, timeout time.Duration) error
+}
+
+// NamespaceStorage 定义命名空间存储接口
+type NamespaceStorage interface {
+	// CreateNamespace 创建命名空间
+	CreateNamespace(ctx context.Context, namespace *Namespace) error
+
+	// DeleteNamespace 删除命名空间
+	DeleteNamespace(ctx context.Context, name string) error
+
+	// GetNamespace 获取命名空间详情
+	GetNamespace(ctx context.Context, name string) (*Namespace, error)
+
+	// ListNamespaces 获取所有命名空间列表
+	ListNamespaces(ctx context.Context) ([]*Namespace, error)
+
+	// UpdateNamespaceServiceCount 更新命名空间服务数量
+	UpdateNamespaceServiceCount(ctx context.Context, name string, delta int) error
 }
 
 // StorageError 定义存储操作可能返回的错误类型
@@ -64,6 +98,8 @@ const (
 	ErrInvalidArgument
 	// ErrInternal 内部错误
 	ErrInternal
+	// ErrNamespaceNotEmpty 命名空间非空
+	ErrNamespaceNotEmpty
 )
 
 // NewNotFoundError 创建资源不存在错误
@@ -94,6 +130,14 @@ func NewInvalidArgumentError(message string) *StorageError {
 func NewInternalError(message string) *StorageError {
 	return &StorageError{
 		Code:    ErrInternal,
+		Message: message,
+	}
+}
+
+// NewNamespaceNotEmptyError 创建命名空间非空错误
+func NewNamespaceNotEmptyError(message string) *StorageError {
+	return &StorageError{
+		Code:    ErrNamespaceNotEmpty,
 		Message: message,
 	}
 }

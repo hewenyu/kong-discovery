@@ -27,12 +27,12 @@ type Server struct {
 }
 
 // NewServer 创建DNS服务器
-func NewServer(conf *config.Config, storage storage.ServiceStorage) (*Server, error) {
+func NewServer(conf *config.Config, serviceStorage storage.ServiceStorage, namespaceStorage storage.NamespaceStorage) (*Server, error) {
 	// 创建DNS缓存
 	cache := NewDNSCache(conf.DNS.CacheTTL)
 
 	// 创建记录管理器
-	recordManager := NewRecordManager(storage, conf.DNS.Domain, conf.DNS.CacheTTL)
+	recordManager := NewRecordManager(serviceStorage, namespaceStorage, conf.DNS.Domain, conf.DNS.CacheTTL)
 
 	// 创建上游解析器
 	upstreamResolver := NewUpstreamResolver(conf.DNS.Upstream, cache)

@@ -10,20 +10,42 @@ import (
 
 // AdminServiceHandler 管理API服务处理器
 type AdminServiceHandler struct {
-	storage storage.ServiceStorage
+	storage          storage.ServiceStorage
+	namespaceStorage storage.NamespaceStorage
 }
 
 // NewAdminServiceHandler 创建管理API服务处理器
-func NewAdminServiceHandler(storage storage.ServiceStorage) *AdminServiceHandler {
+func NewAdminServiceHandler(storage storage.ServiceStorage, namespaceStorage storage.NamespaceStorage) *AdminServiceHandler {
 	return &AdminServiceHandler{
-		storage: storage,
+		storage:          storage,
+		namespaceStorage: namespaceStorage,
 	}
 }
 
 // ListServices 获取所有服务列表
 func (h *AdminServiceHandler) ListServices(c echo.Context) error {
-	// 从存储层获取所有服务
-	services, err := h.storage.ListServices(c.Request().Context())
+	// 获取查询参数
+	namespace := c.QueryParam("namespace")
+	serviceName := c.QueryParam("name")
+
+	var services []*storage.Service
+	var err error
+
+	// 根据查询参数决定调用哪个接口
+	if namespace != "" && serviceName != "" {
+		// 查询指定命名空间和名称的服务
+		services, err = h.storage.ListServicesByNameAndNamespace(c.Request().Context(), namespace, serviceName)
+	} else if namespace != "" {
+		// 查询指定命名空间的服务
+		services, err = h.storage.ListServicesByNamespace(c.Request().Context(), namespace)
+	} else if serviceName != "" {
+		// 查询指定名称的服务
+		services, err = h.storage.ListServicesByName(c.Request().Context(), serviceName)
+	} else {
+		// 查询所有服务
+		services, err = h.storage.ListServices(c.Request().Context())
+	}
+
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, ServiceResponse{
 			Code:    http.StatusInternalServerError,
@@ -90,12 +112,13 @@ type SystemStatusResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		Status      string                 `json:"status"`
-		Version     string                 `json:"version"`
-		StartTime   time.Time              `json:"start_time"`
-		Uptime      string                 `json:"uptime"`
-		NumServices int                    `json:"num_services"`
-		Resources   map[string]interface{} `json:"resources"`
+		Status        string                 `json:"status"`
+		Version       string                 `json:"version"`
+		StartTime     time.Time              `json:"start_time"`
+		Uptime        string                 `json:"uptime"`
+		NumServices   int                    `json:"num_services"`
+		NumNamespaces int                    `json:"num_namespaces"`
+		Resources     map[string]interface{} `json:"resources"`
 	} `json:"data"`
 }
 
@@ -103,6 +126,15 @@ type SystemStatusResponse struct {
 func (h *AdminServiceHandler) GetSystemStatus(c echo.Context) error {
 	// 从存储层获取所有服务
 	services, err := h.storage.ListServices(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, ServiceResponse{
+			Code:    http.StatusInternalServerError,
+			Message: "获取系统状态失败: " + err.Error(),
+		})
+	}
+
+	// 获取所有命名空间
+	namespaces, err := h.namespaceStorage.ListNamespaces(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, ServiceResponse{
 			Code:    http.StatusInternalServerError,
@@ -122,6 +154,7 @@ func (h *AdminServiceHandler) GetSystemStatus(c echo.Context) error {
 	response.Data.StartTime = startTime
 	response.Data.Uptime = time.Since(startTime).String()
 	response.Data.NumServices = len(services)
+	response.Data.NumNamespaces = len(namespaces)
 	response.Data.Resources = getResourceUsage()
 
 	return c.JSON(http.StatusOK, response)

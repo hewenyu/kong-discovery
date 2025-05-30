@@ -16,6 +16,8 @@ type Config struct {
 	ServerAddr string `json:"server_addr"`
 	// 服务名称
 	ServiceName string `json:"service_name"`
+	// 命名空间，默认为"default"
+	Namespace string `json:"namespace"`
 	// 服务IP地址
 	ServiceIP string `json:"service_ip"`
 	// 服务端口
@@ -83,6 +85,9 @@ func NewClient(config *Config) (*Client, error) {
 	}
 	if config.RetryCount == 0 {
 		config.RetryCount = 3
+	}
+	if config.Namespace == "" {
+		config.Namespace = "default"
 	}
 
 	// 创建HTTP客户端

@@ -12,13 +12,15 @@ import (
 
 // ServiceStorage 实现基于etcd的服务存储
 type ServiceStorage struct {
-	client *Client
+	client           *Client
+	namespaceStorage *NamespaceStorage
 }
 
 // NewServiceStorage 创建etcd服务存储
 func NewServiceStorage(client *Client) *ServiceStorage {
 	return &ServiceStorage{
-		client: client,
+		client:           client,
+		namespaceStorage: NewNamespaceStorage(client),
 	}
 }
 
@@ -26,6 +28,34 @@ func NewServiceStorage(client *Client) *ServiceStorage {
 func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.Service) error {
 	if service.ID == "" || service.Name == "" || service.IP == "" || service.Port <= 0 {
 		return storage.NewInvalidArgumentError("服务ID、名称、IP和端口不能为空")
+	}
+
+	// 如果没有指定命名空间，使用默认命名空间
+	if service.Namespace == "" {
+		service.Namespace = "default"
+	}
+
+	// 检查命名空间是否存在
+	_, err := s.namespaceStorage.GetNamespace(ctx, service.Namespace)
+	if err != nil {
+		if se, ok := err.(*storage.StorageError); ok && se.Code == storage.ErrNotFound {
+			// 如果是default命名空间不存在，则自动创建
+			if service.Namespace == "default" {
+				defaultNs := &storage.Namespace{
+					Name:        "default",
+					Description: "默认命名空间",
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				if err := s.namespaceStorage.CreateNamespace(ctx, defaultNs); err != nil {
+					return storage.NewInternalError(fmt.Sprintf("创建默认命名空间失败: %v", err))
+				}
+			} else {
+				return storage.NewNotFoundError(fmt.Sprintf("命名空间不存在: %s", service.Namespace))
+			}
+		} else {
+			return err
+		}
 	}
 
 	// 设置注册时间和最后心跳时间
@@ -51,8 +81,8 @@ func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.S
 		return storage.NewInternalError(fmt.Sprintf("序列化服务数据失败: %v", err))
 	}
 
-	// 存储到etcd
-	key := s.client.GetServiceKey(service.ID)
+	// 存储到etcd，使用命名空间前缀
+	key := s.client.GetNamespacedServiceKey(service.Namespace, service.ID)
 
 	// 如果设置了TTL，创建带有租约的key
 	if service.TTL > 0 {
@@ -75,6 +105,13 @@ func (s *ServiceStorage) RegisterService(ctx context.Context, service *storage.S
 		}
 	}
 
+	// 更新命名空间服务计数
+	err = s.namespaceStorage.UpdateNamespaceServiceCount(ctx, service.Namespace, 1)
+	if err != nil {
+		// 仅记录错误，不影响服务注册
+		fmt.Printf("更新命名空间服务计数失败: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -84,7 +121,14 @@ func (s *ServiceStorage) DeregisterService(ctx context.Context, serviceID string
 		return storage.NewInvalidArgumentError("服务ID不能为空")
 	}
 
-	key := s.client.GetServiceKey(serviceID)
+	// 获取服务信息，以便知道服务所在的命名空间
+	service, err := s.GetService(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+
+	// 从etcd中删除服务
+	key := s.client.GetNamespacedServiceKey(service.Namespace, serviceID)
 	resp, err := s.client.GetClient().Delete(ctx, key)
 	if err != nil {
 		return storage.NewInternalError(fmt.Sprintf("从etcd删除失败: %v", err))
@@ -92,6 +136,13 @@ func (s *ServiceStorage) DeregisterService(ctx context.Context, serviceID string
 
 	if resp.Deleted == 0 {
 		return storage.NewNotFoundError(fmt.Sprintf("服务不存在: %s", serviceID))
+	}
+
+	// 更新命名空间服务计数
+	err = s.namespaceStorage.UpdateNamespaceServiceCount(ctx, service.Namespace, -1)
+	if err != nil {
+		// 仅记录错误，不影响服务注销
+		fmt.Printf("更新命名空间服务计数失败: %v\n", err)
 	}
 
 	return nil
@@ -103,6 +154,50 @@ func (s *ServiceStorage) GetService(ctx context.Context, serviceID string) (*sto
 		return nil, storage.NewInvalidArgumentError("服务ID不能为空")
 	}
 
+	// 由于不知道服务所在的命名空间，需要查询所有命名空间
+	namespaces, err := s.namespaceStorage.ListNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果没有命名空间，尝试在默认命名空间中查找
+	if len(namespaces) == 0 {
+		key := s.client.GetNamespacedServiceKey("default", serviceID)
+		resp, err := s.client.GetClient().Get(ctx, key)
+		if err != nil {
+			return nil, storage.NewInternalError(fmt.Sprintf("从etcd读取失败: %v", err))
+		}
+
+		if len(resp.Kvs) == 0 {
+			return nil, storage.NewNotFoundError(fmt.Sprintf("服务不存在: %s", serviceID))
+		}
+
+		var service storage.Service
+		if err := json.Unmarshal(resp.Kvs[0].Value, &service); err != nil {
+			return nil, storage.NewInternalError(fmt.Sprintf("解析服务数据失败: %v", err))
+		}
+
+		return &service, nil
+	}
+
+	// 在每个命名空间中查找服务
+	for _, ns := range namespaces {
+		key := s.client.GetNamespacedServiceKey(ns.Name, serviceID)
+		resp, err := s.client.GetClient().Get(ctx, key)
+		if err != nil {
+			continue
+		}
+
+		if len(resp.Kvs) > 0 {
+			var service storage.Service
+			if err := json.Unmarshal(resp.Kvs[0].Value, &service); err != nil {
+				continue
+			}
+			return &service, nil
+		}
+	}
+
+	// 尝试兼容旧格式（无命名空间）
 	key := s.client.GetServiceKey(serviceID)
 	resp, err := s.client.GetClient().Get(ctx, key)
 	if err != nil {
@@ -118,12 +213,100 @@ func (s *ServiceStorage) GetService(ctx context.Context, serviceID string) (*sto
 		return nil, storage.NewInternalError(fmt.Sprintf("解析服务数据失败: %v", err))
 	}
 
+	// 如果找到了旧格式的服务，设置默认命名空间
+	if service.Namespace == "" {
+		service.Namespace = "default"
+	}
+
 	return &service, nil
 }
 
 // ListServices 获取所有服务实例列表
 func (s *ServiceStorage) ListServices(ctx context.Context) ([]*storage.Service, error) {
+	// 获取所有命名空间
+	namespaces, err := s.namespaceStorage.ListNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	services := make([]*storage.Service, 0)
+
+	// 如果没有命名空间，尝试使用旧的前缀获取服务
+	if len(namespaces) == 0 {
+		// 兼容旧格式，无命名空间
+		prefix := s.client.GetServicesPrefix()
+		resp, err := s.client.GetClient().Get(ctx, prefix, clientv3.WithPrefix())
+		if err != nil {
+			return nil, storage.NewInternalError(fmt.Sprintf("从etcd读取失败: %v", err))
+		}
+
+		for _, kv := range resp.Kvs {
+			var service storage.Service
+			if err := json.Unmarshal(kv.Value, &service); err != nil {
+				// 忽略无法解析的数据，继续处理其他数据
+				continue
+			}
+			if service.Namespace == "" {
+				service.Namespace = "default"
+			}
+			services = append(services, &service)
+		}
+
+		return services, nil
+	}
+
+	// 遍历每个命名空间，获取其中的服务
+	for _, ns := range namespaces {
+		prefix := s.client.GetNamespaceServicesPrefix(ns.Name)
+		resp, err := s.client.GetClient().Get(ctx, prefix, clientv3.WithPrefix())
+		if err != nil {
+			continue
+		}
+
+		for _, kv := range resp.Kvs {
+			var service storage.Service
+			if err := json.Unmarshal(kv.Value, &service); err != nil {
+				// 忽略无法解析的数据，继续处理其他数据
+				continue
+			}
+			services = append(services, &service)
+		}
+	}
+
+	// 兼容旧格式，无命名空间
 	prefix := s.client.GetServicesPrefix()
+	resp, err := s.client.GetClient().Get(ctx, prefix, clientv3.WithPrefix())
+	if err == nil {
+		for _, kv := range resp.Kvs {
+			var service storage.Service
+			if err := json.Unmarshal(kv.Value, &service); err != nil {
+				// 忽略无法解析的数据，继续处理其他数据
+				continue
+			}
+			if service.Namespace == "" {
+				service.Namespace = "default"
+			}
+			services = append(services, &service)
+		}
+	}
+
+	return services, nil
+}
+
+// ListServicesByNamespace 获取指定命名空间的服务实例列表
+func (s *ServiceStorage) ListServicesByNamespace(ctx context.Context, namespace string) ([]*storage.Service, error) {
+	if namespace == "" {
+		return nil, storage.NewInvalidArgumentError("命名空间不能为空")
+	}
+
+	// 检查命名空间是否存在
+	_, err := s.namespaceStorage.GetNamespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取指定命名空间的服务
+	prefix := s.client.GetNamespaceServicesPrefix(namespace)
 	resp, err := s.client.GetClient().Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, storage.NewInternalError(fmt.Sprintf("从etcd读取失败: %v", err))
@@ -150,6 +333,32 @@ func (s *ServiceStorage) ListServicesByName(ctx context.Context, serviceName str
 
 	// 获取所有服务
 	services, err := s.ListServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// 过滤出指定名称的服务
+	result := make([]*storage.Service, 0)
+	for _, service := range services {
+		if service.Name == serviceName {
+			result = append(result, service)
+		}
+	}
+
+	return result, nil
+}
+
+// ListServicesByNameAndNamespace 获取指定命名空间和名称的服务实例列表
+func (s *ServiceStorage) ListServicesByNameAndNamespace(ctx context.Context, namespace, serviceName string) ([]*storage.Service, error) {
+	if namespace == "" {
+		return nil, storage.NewInvalidArgumentError("命名空间不能为空")
+	}
+	if serviceName == "" {
+		return nil, storage.NewInvalidArgumentError("服务名称不能为空")
+	}
+
+	// 获取指定命名空间的服务
+	services, err := s.ListServicesByNamespace(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -197,28 +406,22 @@ func (s *ServiceStorage) CleanupStaleServices(ctx context.Context, timeout time.
 
 	for _, service := range services {
 		timeSinceLastHeartbeat := now.Sub(service.LastHeartbeat)
-		fmt.Printf("服务 %s 上次心跳: %v, 时间差: %v\n",
-			service.ID, service.LastHeartbeat, timeSinceLastHeartbeat)
+		fmt.Printf("服务 %s 上次心跳: %v, 时间差: %v\n", service.ID, service.LastHeartbeat, timeSinceLastHeartbeat)
 
-		// 如果心跳超时，注销服务
 		if timeSinceLastHeartbeat > timeout {
-			fmt.Printf("服务 %s 已超时，正在清理\n", service.ID)
-
-			// 使用独立上下文以确保操作不会被父上下文取消
-			deleteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-			// 直接使用etcd客户端删除，避免可能的业务逻辑问题
-			key := s.client.GetServiceKey(service.ID)
-			_, err := s.client.GetClient().Delete(deleteCtx, key)
-			cancel() // 立即取消context，避免在循环中堆积
-
-			if err != nil {
+			fmt.Printf("服务 %s 超时，准备清理\n", service.ID)
+			if err := s.DeregisterService(ctx, service.ID); err != nil {
 				fmt.Printf("清理过期服务 %s 失败: %v\n", service.ID, err)
-			} else {
-				fmt.Printf("已成功清理过期服务 %s\n", service.ID)
+				continue
 			}
+			fmt.Printf("清理过期服务 %s 成功\n", service.ID)
 		}
 	}
 
 	return nil
+}
+
+// GetClient 获取底层的etcd Client
+func (s *ServiceStorage) GetClient() *Client {
+	return s.client
 }

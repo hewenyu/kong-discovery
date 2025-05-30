@@ -9,12 +9,13 @@ import (
 
 // RegisterRequest 服务注册请求
 type RegisterRequest struct {
-	Name     string            `json:"name"`
-	IP       string            `json:"ip"`
-	Port     int               `json:"port"`
-	Tags     []string          `json:"tags,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-	TTL      string            `json:"ttl,omitempty"`
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace,omitempty"`
+	IP        string            `json:"ip"`
+	Port      int               `json:"port"`
+	Tags      []string          `json:"tags,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	TTL       string            `json:"ttl,omitempty"`
 }
 
 // Register 注册服务
@@ -26,12 +27,13 @@ func (c *Client) Register(ctx context.Context) error {
 
 	// 准备请求体
 	req := RegisterRequest{
-		Name:     c.config.ServiceName,
-		IP:       c.config.ServiceIP,
-		Port:     c.config.ServicePort,
-		Tags:     c.config.Tags,
-		Metadata: c.config.Metadata,
-		TTL:      fmt.Sprintf("%ds", int(c.config.HeartbeatInterval.Seconds())*3), // TTL设置为心跳间隔的3倍
+		Name:      c.config.ServiceName,
+		Namespace: c.config.Namespace,
+		IP:        c.config.ServiceIP,
+		Port:      c.config.ServicePort,
+		Tags:      c.config.Tags,
+		Metadata:  c.config.Metadata,
+		TTL:       fmt.Sprintf("%ds", int(c.config.HeartbeatInterval.Seconds())*3), // TTL设置为心跳间隔的3倍
 	}
 
 	// 发送注册请求

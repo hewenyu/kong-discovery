@@ -17,6 +17,7 @@ const (
 // Service 表示一个服务实例
 type Service struct {
 	ID            string            `json:"id"`             // 服务实例唯一ID
+	Namespace     string            `json:"namespace"`      // 服务所属命名空间
 	Name          string            `json:"name"`           // 服务名称
 	IP            string            `json:"ip"`             // 服务IP地址
 	Port          int               `json:"port"`           // 服务端口

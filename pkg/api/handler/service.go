@@ -11,12 +11,13 @@ import (
 
 // ServiceRequest 服务注册请求
 type ServiceRequest struct {
-	Name     string            `json:"name" validate:"required"`
-	IP       string            `json:"ip" validate:"required,ip"`
-	Port     int               `json:"port" validate:"required,min=1,max=65535"`
-	Tags     []string          `json:"tags"`
-	Metadata map[string]string `json:"metadata"`
-	TTL      string            `json:"ttl"`
+	Name      string            `json:"name" validate:"required"`
+	Namespace string            `json:"namespace"`
+	IP        string            `json:"ip" validate:"required,ip"`
+	Port      int               `json:"port" validate:"required,min=1,max=65535"`
+	Tags      []string          `json:"tags"`
+	Metadata  map[string]string `json:"metadata"`
+	TTL       string            `json:"ttl"`
 }
 
 // ServiceResponse 服务注册响应
@@ -72,9 +73,15 @@ func (h *ServiceHandler) RegisterService(c echo.Context) error {
 		ttl = int(duration.Seconds())
 	}
 
+	// 如果未指定命名空间，使用默认命名空间
+	if req.Namespace == "" {
+		req.Namespace = "default"
+	}
+
 	// 创建服务实例
 	service := &storage.Service{
 		ID:            serviceID,
+		Namespace:     req.Namespace,
 		Name:          req.Name,
 		IP:            req.IP,
 		Port:          req.Port,
@@ -101,6 +108,11 @@ func (h *ServiceHandler) RegisterService(c echo.Context) error {
 					Code:    http.StatusBadRequest,
 					Message: se.Error(),
 				})
+			case storage.ErrNotFound:
+				return c.JSON(http.StatusNotFound, ServiceResponse{
+					Code:    http.StatusNotFound,
+					Message: se.Error(),
+				})
 			default:
 				return c.JSON(http.StatusInternalServerError, ServiceResponse{
 					Code:    http.StatusInternalServerError,
@@ -121,6 +133,7 @@ func (h *ServiceHandler) RegisterService(c echo.Context) error {
 		Message: "服务注册成功",
 		Data: map[string]interface{}{
 			"service_id":    serviceID,
+			"namespace":     req.Namespace,
 			"registered_at": service.RegisteredAt,
 		},
 	})

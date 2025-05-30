@@ -13,18 +13,20 @@ import (
 
 // RecordManager 管理DNS记录
 type RecordManager struct {
-	storage     storage.ServiceStorage
-	domain      string
-	defaultTTL  uint32
-	recordCache sync.Map // 本地记录缓存，key为域名，value为dns.RR
+	storage          storage.ServiceStorage
+	namespaceStorage storage.NamespaceStorage
+	domain           string
+	defaultTTL       uint32
+	recordCache      sync.Map // 本地记录缓存，key为域名，value为dns.RR
 }
 
 // NewRecordManager 创建DNS记录管理器
-func NewRecordManager(storage storage.ServiceStorage, domain string, ttl int) *RecordManager {
+func NewRecordManager(storage storage.ServiceStorage, namespaceStorage storage.NamespaceStorage, domain string, ttl int) *RecordManager {
 	return &RecordManager{
-		storage:    storage,
-		domain:     domain,
-		defaultTTL: uint32(ttl),
+		storage:          storage,
+		namespaceStorage: namespaceStorage,
+		domain:           domain,
+		defaultTTL:       uint32(ttl),
 	}
 }
 
@@ -44,14 +46,24 @@ func (rm *RecordManager) GetRecords(ctx context.Context, name string, qtype uint
 		return nil, nil
 	}
 
-	// 解析服务名称
-	serviceName := extractServiceName(name, baseDomain)
+	// 解析服务名称和命名空间
+	serviceName, namespace := extractServiceInfo(name, baseDomain)
 	if serviceName == "" {
 		return nil, nil
 	}
 
-	// 从存储获取服务
-	services, err := rm.storage.ListServicesByName(ctx, serviceName)
+	var services []*storage.Service
+	var err error
+
+	// 根据命名空间决定如何查询服务
+	if namespace != "" {
+		// 查询指定命名空间下的服务
+		services, err = rm.storage.ListServicesByNameAndNamespace(ctx, namespace, serviceName)
+	} else {
+		// 查询所有命名空间下的指定服务
+		services, err = rm.storage.ListServicesByName(ctx, serviceName)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +88,15 @@ func (rm *RecordManager) GetRecords(ctx context.Context, name string, qtype uint
 	case dns.TypeSRV:
 		// 生成SRV记录
 		for _, service := range services {
-			rr, err := createSRVRecord(name, service.Name+"."+baseDomain, service.Port, rm.defaultTTL)
+			// 根据是否指定了命名空间生成不同的目标域名
+			var target string
+			if namespace != "" {
+				target = fmt.Sprintf("%s.%s.%s", service.Name, service.Namespace, baseDomain)
+			} else {
+				target = fmt.Sprintf("%s.%s", service.Name, baseDomain)
+			}
+
+			rr, err := createSRVRecord(name, target, service.Port, rm.defaultTTL)
 			if err != nil {
 				continue
 			}
@@ -105,20 +125,34 @@ func (rm *RecordManager) RefreshRecords(ctx context.Context) error {
 
 	// 为每个服务预生成记录并缓存
 	for _, service := range services {
-		// 生成域名
+		// 生成普通域名和带命名空间的域名
 		domainName := service.Name + "." + rm.domain
+		namespacedDomainName := fmt.Sprintf("%s.%s.%s", service.Name, service.Namespace, rm.domain)
 
-		// 生成A记录
+		// 生成标准A记录
 		aRecord, err := createARecord(domainName, service.IP, rm.defaultTTL)
 		if err == nil {
 			rm.addToCache(domainName, dns.TypeA, aRecord)
 		}
 
-		// 生成SRV记录
+		// 生成带命名空间的A记录
+		namespacedARecord, err := createARecord(namespacedDomainName, service.IP, rm.defaultTTL)
+		if err == nil {
+			rm.addToCache(namespacedDomainName, dns.TypeA, namespacedARecord)
+		}
+
+		// 生成标准SRV记录
 		srvDomain := fmt.Sprintf("_%s._tcp.%s", service.Name, rm.domain)
 		srvRecord, err := createSRVRecord(srvDomain, domainName, service.Port, rm.defaultTTL)
 		if err == nil {
 			rm.addToCache(srvDomain, dns.TypeSRV, srvRecord)
+		}
+
+		// 生成带命名空间的SRV记录
+		namespacedSrvDomain := fmt.Sprintf("_%s._tcp.%s.%s", service.Name, service.Namespace, rm.domain)
+		namespacedSrvRecord, err := createSRVRecord(namespacedSrvDomain, namespacedDomainName, service.Port, rm.defaultTTL)
+		if err == nil {
+			rm.addToCache(namespacedSrvDomain, dns.TypeSRV, namespacedSrvRecord)
 		}
 	}
 
@@ -143,24 +177,43 @@ func cacheKey(name string, qtype uint16) string {
 	return name + "-" + dns.TypeToString[qtype]
 }
 
-// extractServiceName 从域名中提取服务名称
-func extractServiceName(name, baseDomain string) string {
+// extractServiceInfo 从域名中提取服务名称和命名空间
+func extractServiceInfo(name, baseDomain string) (serviceName, namespace string) {
 	// 处理SRV记录
 	if strings.HasPrefix(name, "_") {
 		parts := strings.Split(name, ".")
 		if len(parts) >= 3 && parts[1] == "_tcp" {
-			return strings.TrimPrefix(parts[0], "_")
+			serviceName = strings.TrimPrefix(parts[0], "_")
+
+			// 检查是否包含命名空间
+			if len(parts) >= 4 && parts[2] != baseDomain {
+				namespace = parts[2]
+			}
+
+			return serviceName, namespace
 		}
-		return ""
+		return "", ""
 	}
 
 	// 处理A记录
 	prefix := strings.TrimSuffix(name, "."+baseDomain)
 	parts := strings.Split(prefix, ".")
 	if len(parts) == 0 {
-		return ""
+		return "", ""
 	}
-	return parts[0]
+
+	// 如果只有一部分，那就是服务名称
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+
+	// 如果有两部分，第一部分是服务名称，第二部分是命名空间
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+
+	// 如果有更多部分，先处理第一部分为服务名称，最后一部分为命名空间
+	return parts[0], parts[len(parts)-1]
 }
 
 // createARecord 创建A记录

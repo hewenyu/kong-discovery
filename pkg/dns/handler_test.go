@@ -34,10 +34,30 @@ func getEtcdConfig() *config.EtcdConfig {
 
 // 准备测试服务数据
 func prepareTestService(t *testing.T, serviceStorage storage.ServiceStorage) *storage.Service {
+	// 创建命名空间，不依赖于类型断言
+	ctx := context.Background()
+
+	// 创建测试命名空间
+	nsStorage := etcd.NewNamespaceStorage(getEtcdClient(t))
+	namespace := &storage.Namespace{
+		Name:        "test-ns",
+		Description: "测试命名空间",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	err := nsStorage.CreateNamespace(ctx, namespace)
+	// 忽略已存在的命名空间错误
+	if err != nil {
+		if se, ok := err.(*storage.StorageError); !ok || se.Code != storage.ErrAlreadyExists {
+			require.NoError(t, err, "创建测试命名空间失败")
+		}
+	}
+
 	// 创建测试服务
 	service := &storage.Service{
 		ID:            "test-service-1",
 		Name:          "app",
+		Namespace:     "test-ns", // 添加命名空间字段
 		IP:            "192.168.1.10",
 		Port:          8080,
 		Tags:          []string{"test", "dns"},
@@ -49,11 +69,19 @@ func prepareTestService(t *testing.T, serviceStorage storage.ServiceStorage) *st
 	}
 
 	// 注册服务
-	ctx := context.Background()
-	err := serviceStorage.RegisterService(ctx, service)
+	err = serviceStorage.RegisterService(ctx, service)
 	require.NoError(t, err, "注册测试服务失败")
 
 	return service
+}
+
+// 获取etcd客户端
+func getEtcdClient(t *testing.T) *etcd.Client {
+	etcdConfig := getEtcdConfig()
+	etcdConfig.DialTimeout = "10s" // 使用更长的超时时间
+	client, err := etcd.NewClient(etcdConfig)
+	require.NoError(t, err, "创建etcd客户端失败")
+	return client
 }
 
 // 清理测试服务数据
@@ -94,13 +122,15 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 
 	// 创建服务存储
 	serviceStorage := etcd.NewServiceStorage(client)
+	// 创建命名空间存储
+	namespaceStorage := etcd.NewNamespaceStorage(client)
 
 	// 准备测试数据
 	service := prepareTestService(t, serviceStorage)
 	defer cleanupTestService(t, serviceStorage, service.ID)
 
 	// 创建DNS服务器
-	server, err := NewServer(conf, serviceStorage)
+	server, err := NewServer(conf, serviceStorage, namespaceStorage)
 	require.NoError(t, err, "创建DNS服务器失败")
 
 	// 启动服务器
@@ -159,6 +189,55 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 			if assert.True(t, ok, "响应不是SRV记录") {
 				assert.Equal(t, uint16(8080), srvRecord.Port, "端口不匹配")
 				assert.Equal(t, "app.service.test.", srvRecord.Target, "目标不匹配")
+			}
+		}
+	})
+
+	// 添加命名空间相关的A记录测试
+	t.Run("带命名空间的A记录解析测试", func(t *testing.T) {
+		dnsClient := new(dns.Client)
+		msg := new(dns.Msg)
+		msg.SetQuestion("app.test-ns.service.test.", dns.TypeA)
+		msg.RecursionDesired = true
+
+		response, _, err := dnsClient.Exchange(msg, "127.0.0.1:15353")
+		require.NoError(t, err, "带命名空间的DNS A记录查询失败")
+		require.NotNil(t, response, "没有收到DNS响应")
+
+		assert.Equal(t, dns.RcodeSuccess, response.Rcode, "DNS响应码不正确")
+		assert.True(t, response.Authoritative, "DNS响应不是权威响应")
+		assert.GreaterOrEqual(t, len(response.Answer), 1, "DNS响应没有包含回答部分")
+
+		// 验证A记录
+		if len(response.Answer) > 0 {
+			aRecord, ok := response.Answer[0].(*dns.A)
+			if assert.True(t, ok, "响应不是A记录") {
+				assert.Equal(t, net.ParseIP("192.168.1.10").String(), aRecord.A.String(), "IP地址不匹配")
+			}
+		}
+	})
+
+	// 添加命名空间相关的SRV记录测试
+	t.Run("带命名空间的SRV记录解析测试", func(t *testing.T) {
+		dnsClient := new(dns.Client)
+		msg := new(dns.Msg)
+		msg.SetQuestion("_app._tcp.test-ns.service.test.", dns.TypeSRV)
+		msg.RecursionDesired = true
+
+		response, _, err := dnsClient.Exchange(msg, "127.0.0.1:15353")
+		require.NoError(t, err, "带命名空间的DNS SRV记录查询失败")
+		require.NotNil(t, response, "没有收到DNS响应")
+
+		assert.Equal(t, dns.RcodeSuccess, response.Rcode, "DNS响应码不正确")
+		assert.True(t, response.Authoritative, "DNS响应不是权威响应")
+		assert.GreaterOrEqual(t, len(response.Answer), 1, "DNS响应没有包含回答部分")
+
+		// 验证SRV记录
+		if len(response.Answer) > 0 {
+			srvRecord, ok := response.Answer[0].(*dns.SRV)
+			if assert.True(t, ok, "响应不是SRV记录") {
+				assert.Equal(t, uint16(8080), srvRecord.Port, "端口不匹配")
+				assert.Equal(t, "app.test-ns.service.test.", srvRecord.Target, "目标不匹配")
 			}
 		}
 	})

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/hewenyu/kong-discovery/pkg/api/router"
 	"github.com/hewenyu/kong-discovery/pkg/config"
 	"github.com/hewenyu/kong-discovery/pkg/dns"
+	"github.com/hewenyu/kong-discovery/pkg/storage"
 	"github.com/hewenyu/kong-discovery/pkg/storage/etcd"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -50,6 +52,12 @@ func main() {
 
 	// 创建服务存储
 	serviceStorage := etcd.NewServiceStorage(etcdClient)
+
+	// 创建命名空间存储
+	namespaceStorage := etcd.NewNamespaceStorage(etcdClient)
+
+	// 尝试创建默认命名空间
+	createDefaultNamespace(namespaceStorage)
 
 	// 创建Echo实例 - 服务注册API (8080端口)
 	e := echo.New()
@@ -92,7 +100,7 @@ func main() {
 	go startCleanupTask(ctx, serviceStorage, cfg.Heartbeat.Timeout)
 
 	// 初始化并启动DNS服务器
-	dnsServer, err := dns.NewServer(cfg, serviceStorage)
+	dnsServer, err := dns.NewServer(cfg, serviceStorage, namespaceStorage)
 	if err != nil {
 		log.Fatalf("创建DNS服务器失败: %v", err)
 	}
@@ -116,11 +124,12 @@ func main() {
 	}))
 
 	// 创建管理API处理器
-	adminServiceHandler := handler.NewAdminServiceHandler(serviceStorage)
+	adminServiceHandler := handler.NewAdminServiceHandler(serviceStorage, namespaceStorage)
+	namespaceHandler := handler.NewNamespaceHandler(namespaceStorage)
 	metricsHandler := handler.NewMetricsHandler(serviceStorage)
 
 	// 注册管理API路由
-	router.RegisterAdminRoutes(adminAPI, adminServiceHandler, healthHandler, metricsHandler)
+	router.RegisterAdminRoutes(adminAPI, adminServiceHandler, namespaceHandler, healthHandler, metricsHandler)
 
 	// 管理API基础路由
 	adminAPI.GET("/", func(c echo.Context) error {
@@ -185,6 +194,31 @@ func main() {
 	}
 
 	log.Println("服务器已关闭")
+}
+
+// createDefaultNamespace 创建默认命名空间
+func createDefaultNamespace(namespaceStorage *etcd.NamespaceStorage) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	defaultNamespace := &storage.Namespace{
+		Name:        "default",
+		Description: "默认命名空间",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	err := namespaceStorage.CreateNamespace(ctx, defaultNamespace)
+	if err != nil {
+		// 忽略"已存在"错误
+		if strings.Contains(err.Error(), "已存在") {
+			log.Println("默认命名空间已存在")
+			return
+		}
+		log.Printf("创建默认命名空间失败: %v", err)
+	} else {
+		log.Println("创建默认命名空间成功")
+	}
 }
 
 // startCleanupTask 启动清理过期服务的定时任务

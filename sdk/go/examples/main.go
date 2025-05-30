@@ -16,10 +16,11 @@ func main() {
 	config := &sdk.Config{
 		ServerAddr:        "localhost:8080",
 		ServiceName:       "example-service",
+		Namespace:         "production", // 指定命名空间，不指定则默认为"default"
 		ServiceIP:         "127.0.0.1",
 		ServicePort:       8000,
 		Tags:              []string{"example", "sdk"},
-		Metadata:          map[string]string{"version": "1.0.0"},
+		Metadata:          map[string]string{"version": "1.0.0", "env": "production"},
 		HeartbeatInterval: 30 * time.Second,
 		Timeout:           5 * time.Second,
 		RetryCount:        3,
@@ -36,7 +37,7 @@ func main() {
 	if err := client.Register(ctx); err != nil {
 		log.Fatalf("服务注册失败: %v", err)
 	}
-	log.Printf("服务注册成功，服务ID: %s", client.GetServiceID())
+	log.Printf("服务注册成功，服务ID: %s，命名空间: %s", client.GetServiceID(), config.Namespace)
 
 	// 启动心跳
 	client.StartHeartbeat()
@@ -46,6 +47,9 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	log.Println("服务已启动，按Ctrl+C终止...")
+	log.Println("DNS解析示例:")
+	log.Println("  - 标准域名: example-service.service.local")
+	log.Println("  - 带命名空间域名: example-service.production.service.local")
 	<-quit
 
 	// 优雅关闭

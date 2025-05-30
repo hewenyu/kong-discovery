@@ -11,8 +11,9 @@ import (
 
 // Client 封装etcd客户端
 type Client struct {
-	client *clientv3.Client
-	prefix string
+	client          *clientv3.Client
+	servicePrefix   string
+	namespacePrefix string
 }
 
 // NewClient 创建新的etcd客户端
@@ -44,8 +45,9 @@ func NewClient(cfg *config.EtcdConfig) (*Client, error) {
 	}
 
 	return &Client{
-		client: client,
-		prefix: "/kong-discovery/services/",
+		client:          client,
+		servicePrefix:   "/kong-discovery/services/",
+		namespacePrefix: "/kong-discovery/namespaces/",
 	}, nil
 }
 
@@ -61,10 +63,30 @@ func (c *Client) GetClient() *clientv3.Client {
 
 // GetServiceKey 获取服务的完整存储键值
 func (c *Client) GetServiceKey(serviceID string) string {
-	return c.prefix + serviceID
+	return c.servicePrefix + serviceID
+}
+
+// GetNamespacedServiceKey 获取带命名空间的服务键值
+func (c *Client) GetNamespacedServiceKey(namespace, serviceID string) string {
+	return c.servicePrefix + namespace + "/" + serviceID
 }
 
 // GetServicesPrefix 获取服务列表的前缀
 func (c *Client) GetServicesPrefix() string {
-	return c.prefix
+	return c.servicePrefix
+}
+
+// GetNamespaceServicesPrefix 获取指定命名空间的服务列表前缀
+func (c *Client) GetNamespaceServicesPrefix(namespace string) string {
+	return c.servicePrefix + namespace + "/"
+}
+
+// GetNamespaceKey 获取命名空间的完整存储键值
+func (c *Client) GetNamespaceKey(namespace string) string {
+	return c.namespacePrefix + namespace
+}
+
+// GetNamespacesPrefix 获取命名空间列表的前缀
+func (c *Client) GetNamespacesPrefix() string {
+	return c.namespacePrefix
 }
