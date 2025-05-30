@@ -3,7 +3,9 @@ package dns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,6 +526,192 @@ func TestDNSServerWithRealServiceStore(t *testing.T) {
 		}
 
 		t.Logf("额外A记录正确返回了相同IP: %s", sameIP)
+	})
+
+	// 测试混合场景：同IP不同端口、不同IP相同端口、不同IP不同端口
+	t.Run("MixedServicesTest", func(t *testing.T) {
+		// 清理之前的测试数据，确保环境干净
+		_ = serviceStore.Deregister(ctx, "same-ip-service-1")
+		_ = serviceStore.Deregister(ctx, "same-ip-service-2")
+		_ = serviceStore.Deregister(ctx, "same-ip-service-3")
+
+		// 定义测试服务实例
+		instances := []struct {
+			id   string
+			name string
+			ip   string
+			port int
+		}{
+			// 场景1: 相同IP(10.0.0.1)，不同端口(7001,7002)
+			{"mixed-service-1", "mixed-service", "10.0.0.1", 7001},
+			{"mixed-service-2", "mixed-service", "10.0.0.1", 7002},
+
+			// 场景2: 不同IP(10.0.0.2)，相同端口(7001)
+			{"mixed-service-3", "mixed-service", "10.0.0.2", 7001},
+
+			// 场景3: 不同IP(10.0.0.3)，不同端口(7003)
+			{"mixed-service-4", "mixed-service", "10.0.0.3", 7003},
+		}
+
+		// 注册所有服务实例
+		for _, instance := range instances {
+			svcInstance := &model.Service{
+				ID:            instance.id,
+				Namespace:     "default",
+				Name:          instance.name,
+				IP:            instance.ip,
+				Port:          instance.port,
+				Health:        model.HealthStatusHealthy,
+				RegisteredAt:  time.Now(),
+				LastHeartbeat: time.Now(),
+				TTL:           60 * time.Second,
+			}
+
+			// 清理可能存在的实例
+			_ = serviceStore.Deregister(ctx, svcInstance.ID)
+
+			// 注册服务实例
+			if err := serviceStore.Register(ctx, svcInstance); err != nil {
+				t.Fatalf("注册服务实例失败[%s]: %v", instance.id, err)
+			}
+
+			// 确保测试结束后清理服务
+			defer serviceStore.Deregister(ctx, svcInstance.ID)
+		}
+
+		// 测试A记录查询
+		c := new(dns.Client)
+		m := new(dns.Msg)
+		m.SetQuestion("mixed-service.default.service.local.", dns.TypeA)
+		m.RecursionDesired = true
+
+		r, _, err := c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
+
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
+
+		// 检查是否返回了所有不同的IP
+		if len(r.Answer) != len(instances) {
+			t.Fatalf("期望返回%d个A记录，实际返回%d个", len(instances), len(r.Answer))
+		}
+
+		// 创建一个map来跟踪返回的IP地址
+		ips := make(map[string]bool)
+		for _, ans := range r.Answer {
+			aRecord, ok := ans.(*dns.A)
+			if !ok {
+				t.Fatalf("响应不是A记录: %T", ans)
+			}
+			ips[aRecord.A.String()] = true
+		}
+
+		// 检查是否包含所有预期的IP地址
+		expectedIPs := map[string]bool{
+			"10.0.0.1": true,
+			"10.0.0.2": true,
+			"10.0.0.3": true,
+		}
+
+		for ip := range expectedIPs {
+			if !ips[ip] {
+				t.Fatalf("缺少预期的IP地址: %s", ip)
+			}
+		}
+
+		t.Logf("A记录查询成功返回了所有不同的IP地址: %v", ips)
+
+		// 测试SRV记录查询 - 需要增加EDNS0支持以处理较大的响应
+		m = new(dns.Msg)
+		m.SetQuestion("mixed-service.default.service.local.", dns.TypeSRV)
+		m.RecursionDesired = true
+
+		// 添加EDNS0选项，设置更大的缓冲区大小
+		opt := new(dns.OPT)
+		opt.Hdr.Name = "."
+		opt.Hdr.Rrtype = dns.TypeOPT
+		opt.SetUDPSize(4096) // 设置更大的UDP缓冲区大小
+		m.Extra = append(m.Extra, opt)
+
+		r, _, err = c.Exchange(m, "127.0.0.1:15354")
+		if err != nil {
+			t.Fatalf("DNS查询失败: %v", err)
+		}
+
+		if r.Rcode != dns.RcodeSuccess {
+			t.Fatalf("DNS响应错误，代码: %v", r.Rcode)
+		}
+
+		// 检查是否返回了所有服务实例的SRV记录
+		if len(r.Answer) != len(instances) {
+			t.Fatalf("期望返回%d个SRV记录，实际返回%d个", len(instances), len(r.Answer))
+		}
+
+		// 创建map来跟踪返回的IP:端口组合
+		ipPorts := make(map[string]bool)
+		for _, ans := range r.Answer {
+			srvRecord, ok := ans.(*dns.SRV)
+			if !ok {
+				t.Fatalf("响应不是SRV记录: %T", ans)
+			}
+
+			// 通过SRV记录的Target找到对应的A记录
+			targetIP := ""
+			for _, extra := range r.Extra {
+				if aRecord, ok := extra.(*dns.A); ok {
+					if aRecord.Hdr.Name == srvRecord.Target {
+						targetIP = aRecord.A.String()
+						break
+					}
+				}
+			}
+
+			if targetIP == "" {
+				t.Fatalf("SRV记录缺少对应的A记录: %v", srvRecord)
+			}
+
+			ipPort := fmt.Sprintf("%s:%d", targetIP, srvRecord.Port)
+			ipPorts[ipPort] = true
+		}
+
+		// 检查是否包含所有预期的IP:端口组合
+		for _, instance := range instances {
+			ipPort := fmt.Sprintf("%s:%d", instance.ip, instance.port)
+			if !ipPorts[ipPort] {
+				t.Fatalf("缺少预期的IP:端口组合: %s", ipPort)
+			}
+		}
+
+		t.Logf("SRV记录查询成功返回了所有IP:端口组合: %v", ipPorts)
+
+		// 检查相同IP、不同端口的情况
+		sameIPPorts := 0
+		for ipPort := range ipPorts {
+			if strings.HasPrefix(ipPort, "10.0.0.1:") {
+				sameIPPorts++
+			}
+		}
+
+		if sameIPPorts != 2 {
+			t.Fatalf("相同IP(10.0.0.1)下应有2个不同端口，实际有%d个", sameIPPorts)
+		}
+
+		// 检查不同IP、相同端口的情况
+		port7001Count := 0
+		for ipPort := range ipPorts {
+			if strings.HasSuffix(ipPort, ":7001") {
+				port7001Count++
+			}
+		}
+
+		if port7001Count != 2 {
+			t.Fatalf("相同端口(7001)下应有2个不同IP，实际有%d个", port7001Count)
+		}
+
+		t.Logf("成功验证了同IP不同端口、不同IP相同端口和不同IP不同端口的所有场景")
 	})
 
 	// 关闭服务器
