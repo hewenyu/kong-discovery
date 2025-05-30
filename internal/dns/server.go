@@ -162,7 +162,7 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	// 如果没有找到任何记录，返回NXDOMAIN
 	if len(m.Answer) == 0 {
 		m.Rcode = dns.RcodeNameError
-		log.Printf("域名不存在，返回NXDOMAIN")
+		log.Printf("域名不存在,返回NXDOMAIN")
 	}
 
 	// 发送响应
@@ -176,9 +176,7 @@ func (s *server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 // 返回: serviceName, namespace, ok
 func (s *server) parseServiceDomain(name string) (string, string, bool) {
 	// 移除末尾的点号
-	if strings.HasSuffix(name, ".") {
-		name = name[:len(name)-1]
-	}
+	name = strings.TrimSuffix(name, ".")
 
 	// 检查域名是否使用我们的服务域
 	if !strings.HasSuffix(name, s.config.Domain) {
