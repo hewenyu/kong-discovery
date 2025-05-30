@@ -2,6 +2,7 @@
 export interface Service {
   id: string;
   name: string;
+  namespace: string;
   ip: string;
   port: number;
   tags?: string[];
@@ -22,6 +23,7 @@ export enum HealthStatus {
 // 服务注册请求
 export interface RegisterServiceRequest {
   name: string;
+  namespace?: string;
   ip: string;
   port: number;
   tags?: string[];
@@ -61,5 +63,23 @@ export interface HeartbeatResponse {
   message: string;
   data: {
     last_heartbeat: string;
+  };
+}
+
+// 命名空间类型
+export interface Namespace {
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  service_count: number;
+}
+
+// 命名空间列表响应
+export interface NamespaceListResponse {
+  code: number;
+  message: string;
+  data: {
+    namespaces: Namespace[];
   };
 } 

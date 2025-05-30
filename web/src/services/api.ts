@@ -19,6 +19,12 @@ export const serviceApi = {
     return response.data;
   },
 
+  // 获取指定命名空间的服务列表
+  getServicesByNamespace: async (namespace: string) => {
+    const response = await adminApi.get(`/services?namespace=${namespace}`);
+    return response.data;
+  },
+
   // 获取服务详情
   getServiceById: async (id: string) => {
     const response = await adminApi.get(`/services/${id}`);
@@ -40,6 +46,33 @@ export const serviceApi = {
   // 发送心跳
   sendHeartbeat: async (id: string) => {
     const response = await registerApi.put(`/services/${id}/heartbeat`);
+    return response.data;
+  }
+};
+
+// 命名空间相关接口
+export const namespaceApi = {
+  // 获取命名空间列表
+  getNamespaces: async () => {
+    const response = await adminApi.get('/namespaces');
+    return response.data;
+  },
+
+  // 获取命名空间详情
+  getNamespace: async (name: string) => {
+    const response = await adminApi.get(`/namespaces/${name}`);
+    return response.data;
+  },
+
+  // 创建命名空间
+  createNamespace: async (namespaceData: any) => {
+    const response = await adminApi.post('/namespaces', namespaceData);
+    return response.data;
+  },
+
+  // 删除命名空间
+  deleteNamespace: async (name: string) => {
+    const response = await adminApi.delete(`/namespaces/${name}`);
     return response.data;
   }
 };

@@ -14,7 +14,17 @@ import {
   CircularProgress,
   TextField,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack
 } from '@mui/material';
 import { 
   Search as SearchIcon, 
@@ -22,18 +32,27 @@ import {
   Info as InfoIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
-  HelpOutline as HelpOutlineIcon
+  HelpOutline as HelpOutlineIcon,
+  Add as AddIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { serviceApi } from '../services/api';
-import type { Service, ServiceListResponse } from '../types/service';
+import { serviceApi, namespaceApi } from '../services/api';
+import type { Service, ServiceListResponse, Namespace, NamespaceListResponse } from '../types/service';
 import { HealthStatus } from '../types/service';
 
 const Services: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
+  const [namespaces, setNamespaces] = useState<Namespace[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
+  const [createDialogOpen, setCreateDialogOpen] = useState<boolean>(false);
+  const [newNamespace, setNewNamespace] = useState<{name: string, description: string}>({
+    name: '',
+    description: ''
+  });
+  
   const navigate = useNavigate();
 
   // 加载服务列表
@@ -41,7 +60,12 @@ const Services: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await serviceApi.getServices() as ServiceListResponse;
+      let response;
+      if (selectedNamespace === 'all') {
+        response = await serviceApi.getServices() as ServiceListResponse;
+      } else {
+        response = await serviceApi.getServicesByNamespace(selectedNamespace) as ServiceListResponse;
+      }
       setServices(response.data.services);
     } catch (err) {
       console.error('加载服务列表失败:', err);
@@ -51,10 +75,41 @@ const Services: React.FC = () => {
     }
   };
 
+  // 加载命名空间列表
+  const loadNamespaces = async () => {
+    try {
+      const response = await namespaceApi.getNamespaces() as NamespaceListResponse;
+      setNamespaces(response.data.namespaces);
+    } catch (err) {
+      console.error('加载命名空间列表失败:', err);
+    }
+  };
+
+  // 创建新命名空间
+  const handleCreateNamespace = async () => {
+    try {
+      await namespaceApi.createNamespace({
+        name: newNamespace.name,
+        description: newNamespace.description
+      });
+      setCreateDialogOpen(false);
+      setNewNamespace({ name: '', description: '' });
+      loadNamespaces(); // 重新加载命名空间列表
+    } catch (err) {
+      console.error('创建命名空间失败:', err);
+    }
+  };
+
   // 首次加载
   useEffect(() => {
+    loadNamespaces();
     loadServices();
   }, []);
+
+  // 当选择的命名空间变化时，重新加载服务列表
+  useEffect(() => {
+    loadServices();
+  }, [selectedNamespace]);
 
   // 根据搜索条件过滤服务
   const filteredServices = services.filter(service => 
@@ -126,6 +181,32 @@ const Services: React.FC = () => {
         </Box>
       </Box>
 
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel id="namespace-select-label">命名空间</InputLabel>
+          <Select
+            labelId="namespace-select-label"
+            value={selectedNamespace}
+            label="命名空间"
+            onChange={(e) => setSelectedNamespace(e.target.value)}
+          >
+            <MenuItem value="all">所有命名空间</MenuItem>
+            {namespaces.map((ns) => (
+              <MenuItem key={ns.name} value={ns.name}>
+                {ns.name} ({ns.service_count})
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Button 
+          variant="outlined" 
+          startIcon={<AddIcon />}
+          onClick={() => setCreateDialogOpen(true)}
+        >
+          新建命名空间
+        </Button>
+      </Box>
+
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
@@ -140,6 +221,7 @@ const Services: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell>服务名称</TableCell>
+                <TableCell>命名空间</TableCell>
                 <TableCell>IP地址</TableCell>
                 <TableCell>端口</TableCell>
                 <TableCell>健康状态</TableCell>
@@ -154,6 +236,9 @@ const Services: React.FC = () => {
                 filteredServices.map((service) => (
                   <TableRow key={service.id} hover>
                     <TableCell>{service.name}</TableCell>
+                    <TableCell>
+                      <Chip label={service.namespace || 'default'} size="small" color="primary" />
+                    </TableCell>
                     <TableCell>{service.ip}</TableCell>
                     <TableCell>{service.port}</TableCell>
                     <TableCell>{renderHealthStatus(service.health)}</TableCell>
@@ -175,7 +260,7 @@ const Services: React.FC = () => {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={8} align="center">
+                  <TableCell colSpan={9} align="center">
                     {searchTerm ? '没有找到匹配的服务' : '暂无服务数据'}
                   </TableCell>
                 </TableRow>
@@ -184,6 +269,40 @@ const Services: React.FC = () => {
           </Table>
         </TableContainer>
       )}
+
+      {/* 创建命名空间对话框 */}
+      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)}>
+        <DialogTitle>创建新命名空间</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1, minWidth: 400 }}>
+            <TextField
+              label="命名空间名称"
+              fullWidth
+              value={newNamespace.name}
+              onChange={(e) => setNewNamespace({...newNamespace, name: e.target.value})}
+              required
+            />
+            <TextField
+              label="描述"
+              fullWidth
+              multiline
+              rows={2}
+              value={newNamespace.description}
+              onChange={(e) => setNewNamespace({...newNamespace, description: e.target.value})}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateDialogOpen(false)}>取消</Button>
+          <Button 
+            onClick={handleCreateNamespace} 
+            variant="contained" 
+            disabled={!newNamespace.name.trim()}
+          >
+            创建
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

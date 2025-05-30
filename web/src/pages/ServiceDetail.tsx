@@ -27,7 +27,8 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   HelpOutline as HelpOutlineIcon,
-  Label as LabelIcon
+  Label as LabelIcon,
+  Folder as FolderIcon
 } from '@mui/icons-material';
 import { serviceApi } from '../services/api';
 import type { Service, ServiceDetailResponse } from '../types/service';
@@ -191,6 +192,12 @@ const ServiceDetail: React.FC = () => {
           <Grid container spacing={2}>
             <Grid size={{ xs: 12,md: 6}}>
               <Typography variant="h5" gutterBottom>{service.name}</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                <FolderIcon sx={{ mr: 0.5, fontSize: 16, color: 'primary.main' }} />
+                <Typography variant="body2" color="primary">
+                  {service.namespace || 'default'}
+                </Typography>
+              </Box>
               <Typography variant="body2" color="text.secondary" gutterBottom>
                 ID: {service.id}
               </Typography>
