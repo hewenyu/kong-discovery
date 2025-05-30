@@ -7,10 +7,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/hewenyu/kong-discovery/internal/core/config"
+	"github.com/hewenyu/kong-discovery/internal/registration"
 	"github.com/hewenyu/kong-discovery/internal/store/etcd"
 )
 
@@ -72,7 +74,11 @@ func main() {
 	}
 	log.Println("etcd连接测试成功")
 
-	// TODO: 启动服务注册API (8080端口)
+	// 启动服务注册API (8080端口)
+	registrationServer := registration.NewServer(etcdClient, cfg)
+	if err := registrationServer.Start(); err != nil {
+		log.Fatalf("启动服务注册API失败: %v", err)
+	}
 
 	// TODO: 启动管理API (9090端口)
 
@@ -90,11 +96,23 @@ func main() {
 
 	// 使用ctx设置一个超时，等待服务关闭
 	const shutdownTimeout = 5 * time.Second
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
-	// TODO: 等待各服务关闭完成
-	<-shutdownCtx.Done()
+	// 等待各服务关闭完成
+	var wg sync.WaitGroup
+
+	// 关闭服务注册API
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := registrationServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("关闭服务注册API失败: %v", err)
+		}
+	}()
+
+	// 等待所有服务关闭
+	wg.Wait()
 
 	log.Println("服务已关闭")
 }
