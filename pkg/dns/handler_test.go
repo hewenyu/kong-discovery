@@ -39,13 +39,30 @@ func prepareTestService(t *testing.T, serviceStorage storage.ServiceStorage) *st
 
 	// 创建测试命名空间
 	nsStorage := etcd.NewNamespaceStorage(getEtcdClient(t))
+
+	// 创建默认命名空间
+	defaultNs := &storage.Namespace{
+		Name:        "default",
+		Description: "默认命名空间",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	err := nsStorage.CreateNamespace(ctx, defaultNs)
+	// 忽略已存在的命名空间错误
+	if err != nil {
+		if se, ok := err.(*storage.StorageError); !ok || se.Code != storage.ErrAlreadyExists {
+			require.NoError(t, err, "创建默认命名空间失败")
+		}
+	}
+
+	// 创建测试命名空间
 	namespace := &storage.Namespace{
 		Name:        "test-ns",
 		Description: "测试命名空间",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	err := nsStorage.CreateNamespace(ctx, namespace)
+	err = nsStorage.CreateNamespace(ctx, namespace)
 	// 忽略已存在的命名空间错误
 	if err != nil {
 		if se, ok := err.(*storage.StorageError); !ok || se.Code != storage.ErrAlreadyExists {
@@ -72,6 +89,25 @@ func prepareTestService(t *testing.T, serviceStorage storage.ServiceStorage) *st
 	err = serviceStorage.RegisterService(ctx, service)
 	require.NoError(t, err, "注册测试服务失败")
 
+	// 同时在默认命名空间注册相同服务用于测试
+	defaultService := &storage.Service{
+		ID:            "test-service-default",
+		Name:          "app",
+		Namespace:     "default", // 使用默认命名空间
+		IP:            "192.168.1.20",
+		Port:          8080,
+		Tags:          []string{"test", "dns"},
+		Metadata:      map[string]string{"version": "1.0"},
+		Health:        "healthy",
+		RegisteredAt:  time.Now(),
+		LastHeartbeat: time.Now(),
+		TTL:           60,
+	}
+
+	// 注册默认命名空间服务
+	err = serviceStorage.RegisterService(ctx, defaultService)
+	require.NoError(t, err, "注册默认命名空间服务失败")
+
 	return service
 }
 
@@ -87,8 +123,18 @@ func getEtcdClient(t *testing.T) *etcd.Client {
 // 清理测试服务数据
 func cleanupTestService(t *testing.T, serviceStorage storage.ServiceStorage, serviceID string) {
 	ctx := context.Background()
+	// 清理测试命名空间的服务
 	err := serviceStorage.DeregisterService(ctx, serviceID)
 	require.NoError(t, err, "清理测试服务失败")
+
+	// 清理默认命名空间的服务
+	err = serviceStorage.DeregisterService(ctx, "test-service-default")
+	// 忽略可能的服务不存在错误
+	if err != nil {
+		if se, ok := err.(*storage.StorageError); !ok || se.Code != storage.ErrNotFound {
+			require.NoError(t, err, "清理默认命名空间服务失败")
+		}
+	}
 }
 
 func TestDNSResolutionWithRealServer(t *testing.T) {
@@ -163,7 +209,7 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 		if len(response.Answer) > 0 {
 			aRecord, ok := response.Answer[0].(*dns.A)
 			if assert.True(t, ok, "响应不是A记录") {
-				assert.Equal(t, net.ParseIP("192.168.1.10").String(), aRecord.A.String(), "IP地址不匹配")
+				assert.Equal(t, net.ParseIP("192.168.1.20").String(), aRecord.A.String(), "IP地址不匹配")
 			}
 		}
 	})
@@ -172,7 +218,8 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 	t.Run("SRV记录解析测试", func(t *testing.T) {
 		dnsClient := new(dns.Client)
 		msg := new(dns.Msg)
-		msg.SetQuestion("_app._tcp.service.test.", dns.TypeSRV)
+		// 修改为使用默认命名空间的查询格式
+		msg.SetQuestion("_app._tcp.default.service.test.", dns.TypeSRV)
 		msg.RecursionDesired = true
 
 		response, _, err := dnsClient.Exchange(msg, "127.0.0.1:15353")
@@ -188,7 +235,7 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 			srvRecord, ok := response.Answer[0].(*dns.SRV)
 			if assert.True(t, ok, "响应不是SRV记录") {
 				assert.Equal(t, uint16(8080), srvRecord.Port, "端口不匹配")
-				assert.Equal(t, "app.service.test.", srvRecord.Target, "目标不匹配")
+				assert.Equal(t, "app.default.service.test.", srvRecord.Target, "目标不匹配")
 			}
 		}
 	})
@@ -238,6 +285,30 @@ func TestDNSResolutionWithRealServer(t *testing.T) {
 			if assert.True(t, ok, "响应不是SRV记录") {
 				assert.Equal(t, uint16(8080), srvRecord.Port, "端口不匹配")
 				assert.Equal(t, "app.test-ns.service.test.", srvRecord.Target, "目标不匹配")
+			}
+		}
+	})
+
+	// 添加明确指定默认命名空间的A记录测试
+	t.Run("默认命名空间A记录解析测试", func(t *testing.T) {
+		dnsClient := new(dns.Client)
+		msg := new(dns.Msg)
+		msg.SetQuestion("app.default.service.test.", dns.TypeA)
+		msg.RecursionDesired = true
+
+		response, _, err := dnsClient.Exchange(msg, "127.0.0.1:15353")
+		require.NoError(t, err, "默认命名空间的DNS A记录查询失败")
+		require.NotNil(t, response, "没有收到DNS响应")
+
+		assert.Equal(t, dns.RcodeSuccess, response.Rcode, "DNS响应码不正确")
+		assert.True(t, response.Authoritative, "DNS响应不是权威响应")
+		assert.GreaterOrEqual(t, len(response.Answer), 1, "DNS响应没有包含回答部分")
+
+		// 验证A记录
+		if len(response.Answer) > 0 {
+			aRecord, ok := response.Answer[0].(*dns.A)
+			if assert.True(t, ok, "响应不是A记录") {
+				assert.Equal(t, net.ParseIP("192.168.1.20").String(), aRecord.A.String(), "IP地址不匹配")
 			}
 		}
 	})
