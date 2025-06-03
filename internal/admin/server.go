@@ -13,17 +13,19 @@ import (
 	"github.com/hewenyu/kong-discovery/internal/admin/service"
 	"github.com/hewenyu/kong-discovery/internal/core/config"
 	"github.com/hewenyu/kong-discovery/internal/store/etcd"
+	namespaceStore "github.com/hewenyu/kong-discovery/internal/store/namespace"
 	serviceStore "github.com/hewenyu/kong-discovery/internal/store/service"
 )
 
 // Server 表示管理API服务
 type Server struct {
-	e              *echo.Echo
-	host           string
-	port           int
-	serviceHandler *handler.ServiceHandler
-	shutdownCtx    context.Context
-	cancel         context.CancelFunc
+	e                *echo.Echo
+	host             string
+	port             int
+	serviceHandler   *handler.ServiceHandler
+	namespaceHandler *handler.NamespaceHandler
+	shutdownCtx      context.Context
+	cancel           context.CancelFunc
 }
 
 // NewServer 创建一个新的管理API服务
@@ -38,28 +40,36 @@ func NewServer(etcdClient *etcd.Client, cfg *config.Config) *Server {
 	e.Use(middleware.CORS())
 
 	// 创建服务存储
-	store := serviceStore.NewEtcdServiceStore(etcdClient, cfg.Namespace.Default)
+	svcStore := serviceStore.NewEtcdServiceStore(etcdClient, cfg.Namespace.Default)
+
+	// 创建命名空间存储
+	nsStore := namespaceStore.NewEtcdNamespaceStore(etcdClient, svcStore)
 
 	// 创建管理服务
-	adminService := service.NewAdminService(store)
+	adminService := service.NewAdminService(svcStore, nsStore)
 
 	// 创建服务处理器
 	serviceHandler := handler.NewServiceHandler(adminService)
 
+	// 创建命名空间处理器
+	namespaceHandler := handler.NewNamespaceHandler(adminService)
+
 	// 注册路由
 	serviceHandler.RegisterRoutes(e)
+	namespaceHandler.RegisterRoutes(e)
 
 	// 创建上下文
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// 创建服务
 	server := &Server{
-		e:              e,
-		host:           cfg.Server.Admin.Host,
-		port:           cfg.Server.Admin.Port,
-		serviceHandler: serviceHandler,
-		shutdownCtx:    ctx,
-		cancel:         cancel,
+		e:                e,
+		host:             cfg.Server.Admin.Host,
+		port:             cfg.Server.Admin.Port,
+		serviceHandler:   serviceHandler,
+		namespaceHandler: namespaceHandler,
+		shutdownCtx:      ctx,
+		cancel:           cancel,
 	}
 
 	return server

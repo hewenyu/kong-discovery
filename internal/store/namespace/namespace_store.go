@@ -1,4 +1,4 @@
-package service
+package namespace
 
 import (
 	"context"
@@ -6,14 +6,8 @@ import (
 	"github.com/hewenyu/kong-discovery/internal/core/model"
 )
 
-// AdminService 定义管理API的服务层接口
-type AdminService interface {
-	// ListServices 查询服务列表，如果namespace为空，则返回所有命名空间的服务
-	ListServices(ctx context.Context, namespace string) ([]*model.Service, error)
-
-	// GetServiceByID 根据ID获取服务详情
-	GetServiceByID(ctx context.Context, serviceID string) (*model.Service, error)
-
+// NamespaceStore 定义命名空间存储接口
+type NamespaceStore interface {
 	// CreateNamespace 创建命名空间
 	CreateNamespace(ctx context.Context, namespace *model.Namespace) error
 
@@ -25,4 +19,7 @@ type AdminService interface {
 
 	// DeleteNamespace 删除命名空间
 	DeleteNamespace(ctx context.Context, name string) error
+
+	// GetNamespaceServiceCount 获取命名空间下的服务数量
+	GetNamespaceServiceCount(ctx context.Context, name string) (int, error)
 }
