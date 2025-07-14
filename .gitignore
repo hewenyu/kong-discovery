@@ -29,3 +29,4 @@ go.work.sum
 .cursor
 bin/kong-discovery
 configs/config.test.yaml
+.roomodes
